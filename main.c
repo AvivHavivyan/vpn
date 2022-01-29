@@ -73,6 +73,8 @@ int main() {
         closesocket(ListenSocket);
         WSACleanup();
         return 1;
+    } else {
+        printf("Connected.");
     }
     while (true) {
 
@@ -82,10 +84,11 @@ int main() {
         int recvbuflen = DEFAULT_BUFLEN;
 
 // Receive until the peer shuts down the connection
-        do {
+//        do {
             iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
             if (iResult > 0) {
                 printf("Bytes received: %d\n", iResult);
+                printf(recvbuf);
 
                 // Echo the buffer back to the sender
                 iSendResult = send(ClientSocket, recvbuf, iResult, 0);
@@ -101,14 +104,14 @@ int main() {
 //                printf("Connection closing...\n");
 //                return 0;
 //            }
-            else {
-                printf("recv failed: %d\n", WSAGetLastError());
-                closesocket(ClientSocket);
-                WSACleanup();
-                return 1;
-            }
+//            else {
+//                printf("recv failed: %d\n", WSAGetLastError());
+////                closesocket(ClientSocket);
+////                WSACleanup();
+////                return 1;
+//            }
 
-        } while (iResult > 0);
+//        } while (iResult > 0);
 
         // shutdown the send half of the connection since no more data will be sent
 
