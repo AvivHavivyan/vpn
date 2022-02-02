@@ -20,6 +20,7 @@ int WSAAPI getaddrinfo( const char*, const char*, const struct addrinfo*,
 
 int WSAAPI getnameinfo( const struct sockaddr*, socklen_t, char*, DWORD,
                         char*, DWORD, int );
+
 int main() {
     WSADATA wsaData;
     int iResult;
@@ -72,8 +73,10 @@ int main() {
     }
     freeaddrinfo(result);
 
+    listen:
+
     // Listen
-    printf("listening...");
+    printf("Listening... ");
     if (listen(ListenSocket, SOMAXCONN) == SOCKET_ERROR) {
         printf("Listen failed with error: %d\n", WSAGetLastError());
         closesocket(ListenSocket);
@@ -94,8 +97,8 @@ int main() {
 
     // Main server loop, wait for input
     while (true) {
-        bool flag = false;
-        printf("waiting... \n");
+        bool receieved = false;
+        printf("Waiting... \n");
         int netContentLength = 0;
         int contentLength;
         iResult = 0;
@@ -103,7 +106,7 @@ int main() {
             iResult = recv(ClientSocket, &netContentLength, 4, 0);
         }
         if (iResult > 0) {
-            while (!flag) {
+            while (!receieved) {
                 int cnt = 0;
                 char recvbuf[DEFAULT_BUFLEN];
                 int iSendResult;
@@ -111,7 +114,7 @@ int main() {
                 contentLength = ntohl(netContentLength);
                 if (contentLength < DEFAULT_BUFLEN) {
                     iResult = recv(ClientSocket, recvbuf, contentLength, 0);
-                    flag = true;
+                    receieved = true;
                 } else {
                     iResult = recv(ClientSocket, recvbuf, DEFAULT_BUFLEN, 0);
                 }
@@ -125,8 +128,8 @@ int main() {
                         return 1;
                     }
                 }
-                printf("%d", strcmp(recvbuf, "exit"));
                 if (strcmp(recvbuf, "exit\n") == 0) {
+
                     printf("Exiting...");
                     closesocket(ClientSocket);
                     WSACleanup();
@@ -135,8 +138,8 @@ int main() {
                 }
             }
         } else {
-            printf("The connection was terminated unexpectedly. Shutting down...");
-            return 1;
+            printf("The connection was terminated unexpectedly. Shutting down... \n");
+            goto listen;
         }
     }
 }
