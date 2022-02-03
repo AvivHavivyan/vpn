@@ -71,6 +71,7 @@ int main() {
         WSACleanup();
         return 1;
     }
+
     freeaddrinfo(result);
 
     listen:
@@ -95,6 +96,8 @@ int main() {
         printf("Connected. \n");
     }
 
+    char *message = NULL;
+
     // Main server loop, wait for input
     while (true) {
         bool receieved = false;
@@ -117,6 +120,7 @@ int main() {
                     receieved = true;
                 } else {
                     iResult = recv(ClientSocket, recvbuf, DEFAULT_BUFLEN, 0);
+                    strcat(message,recvbuf);
                 }
                 if (iResult > 0) {
                     // Echo the buffer back to the sender
