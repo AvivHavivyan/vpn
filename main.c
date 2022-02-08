@@ -96,12 +96,14 @@ int main() {
         printf("Connected. \n");
     }
 
-    char *message = NULL;
+    // The full message / packet.
+    char *message = "";
 
     // Main server loop, wait for input
     while (true) {
         bool receieved = false;
         printf("Waiting... \n");
+        // Converting from big endian to little endian.
         int netContentLength = 0;
         int contentLength;
         iResult = 0;
@@ -115,32 +117,79 @@ int main() {
                 int iSendResult;
                 int recvbuflen = DEFAULT_BUFLEN;
                 contentLength = ntohl(netContentLength);
+                // If the length of the content in the current iteration
+                // is smaller than the buffer size, the current "chunk" is the last.
                 if (contentLength < DEFAULT_BUFLEN) {
-                    iResult = recv(ClientSocket, recvbuf, contentLength, 0);
+                    recv(ClientSocket, recvbuf, contentLength, 0);
+                    message = recvbuf;
+                    printf("Received \n");
                     receieved = true;
                 } else {
-                    iResult = recv(ClientSocket, recvbuf, DEFAULT_BUFLEN, 0);
+                    recv(ClientSocket, recvbuf, DEFAULT_BUFLEN, 0);
+                    // Add the current "chunk" to the full message.
                     strcat(message,recvbuf);
                 }
-                if (iResult > 0) {
-                    // Echo the buffer back to the sender
-                    iSendResult = send(ClientSocket, recvbuf, iResult, 0);
-                    if (iSendResult == SOCKET_ERROR) {
-                        printf("send failed: %d\n", WSAGetLastError());
-                        closesocket(ClientSocket);
-                        WSACleanup();
-                        return 1;
-                    }
-                }
+                // Implement exit command
                 if (strcmp(recvbuf, "exit\n") == 0) {
-
                     printf("Exiting...");
                     closesocket(ClientSocket);
                     WSACleanup();
-
                     return 0;
                 }
             }
+
+            // Echo back the message:
+            receieved = false;
+            char * startChar;
+            char * endChar;
+            int startIndex = 0;
+            int endIndex = DEFAULT_BUFLEN - 1;
+
+            char * curMessage;
+            u_long messageLen = strlen(message);
+
+            while (!receieved) {
+                if (contentLength < DEFAULT_BUFLEN) {
+                    endIndex = contentLength - 1;
+                }
+                startChar = &message[startIndex];
+                endChar = &message[endIndex];
+                curMessage = calloc(1, endChar - startChar + 1);
+                memcpy(curMessage, startChar, endChar - startChar);
+                startIndex = endIndex + 1;
+                endIndex = endIndex + DEFAULT_BUFLEN;
+                // Echo the buffer back to the sender
+                printf("%d", contentLength);
+
+                if (contentLength > DEFAULT_BUFLEN) {
+                    contentLength -= DEFAULT_BUFLEN;
+                    netContentLength = htonl(DEFAULT_BUFLEN);
+                    send(ClientSocket, &netContentLength, 4, 0);
+                }
+                else if (contentLength <= DEFAULT_BUFLEN) {
+                    netContentLength = htonl(contentLength);
+                    printf("%d", netContentLength);
+                    send(ClientSocket, &netContentLength, 4, 0);
+                    iResult = send(ClientSocket, curMessage, contentLength, 0);
+                    receieved = true;
+                }
+
+                iResult = send(ClientSocket, curMessage, contentLength, 0);
+
+//                if (startIndex >= messageLen) {
+//                    receieved = true;
+//                }
+//                if (iResult == 0) {
+//                    printf("sent");
+//                }
+                if (iResult == SOCKET_ERROR) {
+                    printf("send failed: %d\n", WSAGetLastError());
+                    closesocket(ClientSocket);
+                    WSACleanup();
+                    return 1;
+                }
+            }
+
         } else {
             printf("The connection was terminated unexpectedly. Shutting down... \n");
             goto listen;
