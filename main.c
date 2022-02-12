@@ -104,38 +104,48 @@ int main() {
         bool receieved = false;
         printf("Waiting... \n");
         // Converting from big endian to little endian.
-        int netContentLength = 0;
+        u_long netContentLength = 0;
         int contentLength;
         iResult = 0;
         while (iResult == 0) {
             iResult = recv(ClientSocket, &netContentLength, 4, 0);
         }
+        contentLength = ntohl(netContentLength);
         if (iResult > 0) {
             while (!receieved) {
                 int cnt = 0;
                 char recvbuf[DEFAULT_BUFLEN];
                 int iSendResult;
                 int recvbuflen = DEFAULT_BUFLEN;
-                contentLength = ntohl(netContentLength);
                 // If the length of the content in the current iteration
                 // is smaller than the buffer size, the current "chunk" is the last.
                 if (contentLength < DEFAULT_BUFLEN) {
-                    recv(ClientSocket, recvbuf, contentLength, 0);
+                    iResult = recv(ClientSocket, recvbuf, contentLength, 0);
                     message = recvbuf;
-                    printf("Received \n");
+//                    char * substr = malloc(strlen(recvbuf) - 1);
+//                    strncpy(substr, recvbuf, contentLength);
+                    printf("Content length: %d\n", contentLength);
+                    printf("Received %d bytes\n", iResult);
+                    printf("Recvbuf length: %d\n", strlen(recvbuf));
+                    printf("Recvbuf: %s\n", recvbuf);
+//                    printf("Substr: %s\n", substr);
+
+
+                    if (strcmp(recvbuf, "exit\n") == 0) {
+                        printf("Exiting...");
+                        closesocket(ClientSocket);
+                        WSACleanup();
+                        return 0;
+                    }
                     receieved = true;
                 } else {
                     recv(ClientSocket, recvbuf, DEFAULT_BUFLEN, 0);
                     // Add the current "chunk" to the full message.
                     strcat(message,recvbuf);
+                    contentLength -= DEFAULT_BUFLEN;
                 }
                 // Implement exit command
-                if (strcmp(recvbuf, "exit\n") == 0) {
-                    printf("Exiting...");
-                    closesocket(ClientSocket);
-                    WSACleanup();
-                    return 0;
-                }
+
             }
 
             // Echo back the message:
@@ -159,7 +169,6 @@ int main() {
                 startIndex = endIndex + 1;
                 endIndex = endIndex + DEFAULT_BUFLEN;
                 // Echo the buffer back to the sender
-                printf("%d", contentLength);
 
                 if (contentLength > DEFAULT_BUFLEN) {
                     contentLength -= DEFAULT_BUFLEN;
@@ -168,20 +177,12 @@ int main() {
                 }
                 else if (contentLength <= DEFAULT_BUFLEN) {
                     netContentLength = htonl(contentLength);
-                    printf("%d", netContentLength);
                     send(ClientSocket, &netContentLength, 4, 0);
-                    iResult = send(ClientSocket, curMessage, contentLength, 0);
                     receieved = true;
                 }
 
                 iResult = send(ClientSocket, curMessage, contentLength, 0);
 
-//                if (startIndex >= messageLen) {
-//                    receieved = true;
-//                }
-//                if (iResult == 0) {
-//                    printf("sent");
-//                }
                 if (iResult == SOCKET_ERROR) {
                     printf("send failed: %d\n", WSAGetLastError());
                     closesocket(ClientSocket);
