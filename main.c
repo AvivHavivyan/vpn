@@ -102,6 +102,7 @@ int main() {
     // Main server loop, wait for input
     while (true) {
         bool receieved = false;
+        bool exit = false;
         printf("Waiting... \n");
         // Converting from big endian to little endian.
         u_long netContentLength = 0;
@@ -115,6 +116,8 @@ int main() {
             while (!receieved) {
                 int cnt = 0;
                 char recvbuf[DEFAULT_BUFLEN];
+                // Initializing recvbuf to get rid of garbage mem;
+                memset(recvbuf, 0, DEFAULT_BUFLEN);
                 int iSendResult;
                 int recvbuflen = DEFAULT_BUFLEN;
                 // If the length of the content in the current iteration
@@ -122,21 +125,18 @@ int main() {
                 if (contentLength < DEFAULT_BUFLEN) {
                     iResult = recv(ClientSocket, recvbuf, contentLength, 0);
                     message = recvbuf;
-//                    char * substr = malloc(strlen(recvbuf) - 1);
-//                    strncpy(substr, recvbuf, contentLength);
                     printf("Content length: %d\n", contentLength);
                     printf("Received %d bytes\n", iResult);
                     printf("Recvbuf length: %d\n", strlen(recvbuf));
                     printf("Recvbuf: %s\n", recvbuf);
-//                    printf("Substr: %s\n", substr);
-
 
                     if (strcmp(recvbuf, "exit\n") == 0) {
-                        printf("Exiting...");
+                        printf("Closing connection... \n");
                         closesocket(ClientSocket);
-                        WSACleanup();
-                        return 0;
+                        exit = true;
+                        goto listen;
                     }
+
                     receieved = true;
                 } else {
                     recv(ClientSocket, recvbuf, DEFAULT_BUFLEN, 0);
@@ -144,8 +144,6 @@ int main() {
                     strcat(message,recvbuf);
                     contentLength -= DEFAULT_BUFLEN;
                 }
-                // Implement exit command
-
             }
 
             // Echo back the message:
@@ -159,6 +157,7 @@ int main() {
             u_long messageLen = strlen(message);
 
             while (!receieved) {
+
                 if (contentLength < DEFAULT_BUFLEN) {
                     endIndex = contentLength - 1;
                 }
