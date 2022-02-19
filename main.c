@@ -13,6 +13,8 @@
 #pragma comment (lib, "Mswsock.lib")
 #pragma comment (lib, "AdvApi32.lib")
 
+// Weird config stuff, only add if the compiler does not recognize the functions.
+
 void WSAAPI freeaddrinfo( struct addrinfo* );
 
 int WSAAPI getaddrinfo( const char*, const char*, const struct addrinfo*,
@@ -22,33 +24,37 @@ int WSAAPI getnameinfo( const struct sockaddr*, socklen_t, char*, DWORD,
                         char*, DWORD, int );
 
 int main() {
-    WSADATA wsaData;
-    int iResult;
 
+    WSADATA wsaData; // Contains info about the winsock implementation.
+    int iResult; // Number of bytes received.
+
+    // Sockets - server and client.
     SOCKET ListenSocket = INVALID_SOCKET;
     SOCKET ClientSocket = INVALID_SOCKET;
-    // Initialize Winsock
+
+    // Initialize Winsock. (Here iResult is the exit code for WSAStartup)
     iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
     if (iResult != 0) {
         printf("WSAStartup failed with error: %d\n", iResult);
+        WSACleanup();
         return 1;
     }
 
+    // Specifying information - protocol etc.
     struct addrinfo *result = NULL, *ptr = NULL, hints;
 
-    //settings for the socket - ipv4,
-    ZeroMemory(&hints, sizeof (hints));
+    // Settings for the socket - ipv4,
+    ZeroMemory(&hints, sizeof (hints)); // Fills a block of memory with zeroes.
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
     hints.ai_flags = AI_PASSIVE;
 
-// Resolve the local address and port to be used by the server
-
+    // Resolve the local address and port to be used by the server
     iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
     if (iResult != 0) {
         printf("getaddrinfo failed: %d\n", iResult);
-        WSACleanup();
+        WSACleanup(); // Terminate
         return 1;
     }
 
@@ -62,7 +68,7 @@ int main() {
         return 1;
     }
 
-    // Setup the TCP listening socket
+    // Setup the TCP listening socket - bind.
     iResult = bind(ListenSocket, result->ai_addr, (int)result->ai_addrlen);
     if (iResult == SOCKET_ERROR) {
         printf("bind failed with error: %d\n", WSAGetLastError());
@@ -74,9 +80,10 @@ int main() {
 
     freeaddrinfo(result);
 
+    // New connections loop
     listen:
 
-    // Listen
+    // Listen for connections
     printf("Listening... ");
     if (listen(ListenSocket, SOMAXCONN) == SOCKET_ERROR) {
         printf("Listen failed with error: %d\n", WSAGetLastError());
@@ -97,14 +104,14 @@ int main() {
     }
 
     // The full message / packet.
-    char *message = "";
 
     // Main server loop, wait for input
     while (true) {
-        bool receieved = false;
-        bool exit = false;
+        bool received = false;
         printf("Waiting... \n");
         // Converting from big endian to little endian.
+        // Integers are sent as big endians while many processors use little endian,
+        // thus conversion is necessary.
         u_long netContentLength = 0;
         int contentLength;
         iResult = 0;
@@ -112,19 +119,21 @@ int main() {
             iResult = recv(ClientSocket, &netContentLength, 4, 0);
         }
         contentLength = ntohl(netContentLength);
+        char message[contentLength];
+        memset(message, 0, strlen(message));
+
         if (iResult > 0) {
-            while (!receieved) {
-                int cnt = 0;
+            while (!received) {
                 char recvbuf[DEFAULT_BUFLEN];
-                // Initializing recvbuf to get rid of garbage mem;
+                // Initializing recvbuf to get rid of garbage mem.
                 memset(recvbuf, 0, DEFAULT_BUFLEN);
-                int iSendResult;
-                int recvbuflen = DEFAULT_BUFLEN;
                 // If the length of the content in the current iteration
                 // is smaller than the buffer size, the current "chunk" is the last.
+
+                // Add jandle connection exceptions
                 if (contentLength < DEFAULT_BUFLEN) {
                     iResult = recv(ClientSocket, recvbuf, contentLength, 0);
-                    message = recvbuf;
+                    strcat(message,recvbuf);
                     printf("Content length: %d\n", contentLength);
                     printf("Received %d bytes\n", iResult);
                     printf("Recvbuf length: %d\n", strlen(recvbuf));
@@ -133,11 +142,10 @@ int main() {
                     if (strcmp(recvbuf, "exit\n") == 0) {
                         printf("Closing connection... \n");
                         closesocket(ClientSocket);
-                        exit = true;
                         goto listen;
                     }
 
-                    receieved = true;
+                    received = true;
                 } else {
                     recv(ClientSocket, recvbuf, DEFAULT_BUFLEN, 0);
                     // Add the current "chunk" to the full message.
@@ -146,41 +154,44 @@ int main() {
                 }
             }
 
-            // Echo back the message:
-            receieved = false;
-            char * startChar;
-            char * endChar;
+            // Echo back the message in 512 byte chunks.
+            received = false;
+//            char * startChar;
+//            char * endChar;
             int startIndex = 0;
             int endIndex = DEFAULT_BUFLEN - 1;
 
-            char * curMessage;
-            u_long messageLen = strlen(message);
+            netContentLength = htonl(contentLength);
+            send(ClientSocket, &netContentLength, 4, 0);
 
-            while (!receieved) {
-
+            while (!received) {
                 if (contentLength < DEFAULT_BUFLEN) {
-                    endIndex = contentLength - 1;
+                    endIndex = contentLength;
                 }
-                startChar = &message[startIndex];
-                endChar = &message[endIndex];
-                curMessage = calloc(1, endChar - startChar + 1);
-                memcpy(curMessage, startChar, endChar - startChar);
+                // Get addresses of the desired start and end of the chunk in memory.
+//                startChar = &message[startIndex];
+//                endChar = &message[endIndex];
+                char curMessage[endIndex - startIndex + 1];
+                // Allocating space for an array with a certain number of elements.
+                // Copy the current chunk to curMessage
+                strncpy(curMessage, &message[startIndex], endIndex - startIndex);
+                // Move to the next chunk
                 startIndex = endIndex + 1;
                 endIndex = endIndex + DEFAULT_BUFLEN;
                 // Echo the buffer back to the sender
 
+                // When there's still more than 512 bytes left,
+                // subtract the maximum buflen to account for the number of bytes left and send to client.
                 if (contentLength > DEFAULT_BUFLEN) {
                     contentLength -= DEFAULT_BUFLEN;
-                    netContentLength = htonl(DEFAULT_BUFLEN);
-                    send(ClientSocket, &netContentLength, 4, 0);
+                    send(ClientSocket, curMessage, DEFAULT_BUFLEN, 0);
                 }
+                // Getting to a number smaller or equal to the maximum buflen,
+                // means we have reached the end of the message.
                 else if (contentLength <= DEFAULT_BUFLEN) {
-                    netContentLength = htonl(contentLength);
-                    send(ClientSocket, &netContentLength, 4, 0);
-                    receieved = true;
+                    send(ClientSocket, curMessage, contentLength, 0);
+                    received = true;
                 }
-
-                iResult = send(ClientSocket, curMessage, contentLength, 0);
 
                 if (iResult == SOCKET_ERROR) {
                     printf("send failed: %d\n", WSAGetLastError());
@@ -192,7 +203,7 @@ int main() {
 
         } else {
             printf("The connection was terminated unexpectedly. Shutting down... \n");
-            goto listen;
+            goto listen; // Go to the label accepting a new connection.
         }
     }
 }
