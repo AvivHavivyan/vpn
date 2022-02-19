@@ -171,7 +171,7 @@ int main() {
                 // Get addresses of the desired start and end of the chunk in memory.
 //                startChar = &message[startIndex];
 //                endChar = &message[endIndex];
-                char curMessage[endIndex - startIndex + 1];
+                char curMessage[endIndex - startIndex];
                 // Allocating space for an array with a certain number of elements.
                 // Copy the current chunk to curMessage
                 strncpy(curMessage, &message[startIndex], endIndex - startIndex);
