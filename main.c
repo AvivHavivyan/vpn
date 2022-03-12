@@ -195,8 +195,10 @@ int main() {
 
                 if (iResult == SOCKET_ERROR) {
                     printf("send failed: %d\n", WSAGetLastError());
-                    closesocket(ClientSocket);
-                    WSACleanup();
+//                    closesocket(ClientSocket);
+//                    WSACleanup();
+                    printf("The connection was terminated unexpectedly. Shutting down... \n");
+                    goto listen;
                     return 1;
                 }
             }
