@@ -1,9 +1,8 @@
 #include <winsock2.h>
-#include <unistd.h>
 #include <stdbool.h>
 #include <ws2tcpip.h>
 #include <stdio.h>
-
+//#include <openssl/bio.h>
 
 #define DEFAULT_PORT "27015"
 #define DEFAULT_BUFLEN 512
@@ -125,21 +124,23 @@ int main() {
         if (iResult > 0) {
             while (!received) {
                 char recvbuf[DEFAULT_BUFLEN];
+
                 // Initializing recvbuf to get rid of garbage mem.
                 memset(recvbuf, 0, DEFAULT_BUFLEN);
+
                 // If the length of the content in the current iteration
                 // is smaller than the buffer size, the current "chunk" is the last.
-
-                // Add jandle connection exceptions
+                // Add handle connection exceptions
                 if (contentLength < DEFAULT_BUFLEN) {
-                    iResult = recv(ClientSocket, recvbuf, contentLength, 0);
+                    iResult = recv(ClientSocket, recvbuf, contentLength + 1, 0);
                     strcat(message,recvbuf);
+                    printf("Message: %s \n", message);
                     printf("Content length: %d\n", contentLength);
                     printf("Received %d bytes\n", iResult);
                     printf("Recvbuf length: %d\n", strlen(recvbuf));
                     printf("Recvbuf: %s\n", recvbuf);
 
-                    if (strcmp(recvbuf, "exit\n") == 0) {
+                    if (strcmp(recvbuf, "exit") == 0) {
                         printf("Closing connection... \n");
                         closesocket(ClientSocket);
                         goto listen;
@@ -156,30 +157,25 @@ int main() {
 
             // Echo back the message in 512 byte chunks.
             received = false;
-//            char * startChar;
-//            char * endChar;
             int startIndex = 0;
             int endIndex = DEFAULT_BUFLEN - 1;
 
+            contentLength = strlen(message);
             netContentLength = htonl(contentLength);
             send(ClientSocket, &netContentLength, 4, 0);
 
             while (!received) {
-                if (contentLength < DEFAULT_BUFLEN) {
-                    endIndex = contentLength;
-                }
-                // Get addresses of the desired start and end of the chunk in memory.
-//                startChar = &message[startIndex];
-//                endChar = &message[endIndex];
-                char curMessage[endIndex - startIndex];
+
+                char curMessage[endIndex - startIndex + 1];
+                memset(curMessage, 0, DEFAULT_BUFLEN);
                 // Allocating space for an array with a certain number of elements.
                 // Copy the current chunk to curMessage
                 strncpy(curMessage, &message[startIndex], endIndex - startIndex);
                 // Move to the next chunk
-                startIndex = endIndex + 1;
+                startIndex = endIndex;
                 endIndex = endIndex + DEFAULT_BUFLEN;
-                // Echo the buffer back to the sender
 
+                // Echo the buffer back to the sender
                 // When there's still more than 512 bytes left,
                 // subtract the maximum buflen to account for the number of bytes left and send to client.
                 if (contentLength > DEFAULT_BUFLEN) {
@@ -189,7 +185,7 @@ int main() {
                 // Getting to a number smaller or equal to the maximum buflen,
                 // means we have reached the end of the message.
                 else if (contentLength <= DEFAULT_BUFLEN) {
-                    send(ClientSocket, curMessage, contentLength, 0);
+                    send(ClientSocket, curMessage, strlen(curMessage), 0);
                     received = true;
                 }
 
