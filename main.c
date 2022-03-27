@@ -5,6 +5,7 @@
 //#include <openssl/bio.h>
 
 #define DEFAULT_PORT "27015"
+#define HTTP_PORT "443"
 #define DEFAULT_BUFLEN 512
 
 // Need to link with Ws2_32.lib, Mswsock.lib, and Advapi32.lib
@@ -30,6 +31,7 @@ int main() {
     // Sockets - server and client.
     SOCKET ListenSocket = INVALID_SOCKET;
     SOCKET ClientSocket = INVALID_SOCKET;
+    SOCKET HttpSocket = INVALID_SOCKET;
 
     // Initialize Winsock. (Here iResult is the exit code for WSAStartup)
     iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
@@ -40,7 +42,7 @@ int main() {
     }
 
     // Specifying information - protocol etc.
-    struct addrinfo *result = NULL, *ptr = NULL, hints;
+    struct addrinfo *result = NULL, *ptr = NULL, hints, *http_result = NULL;
 
     // Settings for the socket - ipv4,
     ZeroMemory(&hints, sizeof (hints)); // Fills a block of memory with zeroes.
@@ -56,6 +58,10 @@ int main() {
         WSACleanup(); // Terminate
         return 1;
     }
+
+    iResult = getaddrinfo(NULL, HTTP_PORT, &hints, &http_result);
+    HttpSocket = INVALID_SOCKET;
+    HttpSocket = socket(http_result->ai_family, http_result->ai_socktype, http_result->ai_protocol);
 
     // Initialize the socket with desired values
     ListenSocket = INVALID_SOCKET;
@@ -140,6 +146,7 @@ int main() {
                     printf("Recvbuf length: %d\n", strlen(recvbuf));
                     printf("Recvbuf: %s\n", recvbuf);
 
+
                     if (strcmp(recvbuf, "exit") == 0) {
                         printf("Closing connection... \n");
                         closesocket(ClientSocket);
@@ -154,6 +161,9 @@ int main() {
                     contentLength -= DEFAULT_BUFLEN;
                 }
             }
+
+            send(HttpSocket, message, strlen(message), 0);
+
 
             // Echo back the message in 512 byte chunks.
             received = false;
