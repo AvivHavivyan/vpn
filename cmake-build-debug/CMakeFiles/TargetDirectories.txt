@@ -1,3 +1,0 @@
-C:/Users/Aviv/source/repos/firstapp/vpn/cmake-build-debug/CMakeFiles/vpn.dir
-C:/Users/Aviv/source/repos/firstapp/vpn/cmake-build-debug/CMakeFiles/edit_cache.dir
-C:/Users/Aviv/source/repos/firstapp/vpn/cmake-build-debug/CMakeFiles/rebuild_cache.dir
