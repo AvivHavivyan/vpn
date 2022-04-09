@@ -162,7 +162,27 @@ int main() {
                 }
             }
 
+            connect(HttpSocket, http_result->ai_addr, http_result->ai_addrlen);
+
             send(HttpSocket, message, strlen(message), 0);
+
+            char * response;
+
+            char buffer[50];
+            int bytesRecv = 0;
+
+            for (;;)
+            {
+                iResult = recv(HttpSocket, buffer, sizeof(buffer), 0);
+                if (iResult == SOCKET_ERROR)
+                    return -1;
+                if (iResult == 0)
+                    break;
+                strcat(response, buffer);
+                printf("Bytes received from Webserver: %d", iResult);
+                printf("Msg: %s", buffer);
+                bytesRecv += iResult;
+            }
 
 
             // Echo back the message in 512 byte chunks.
