@@ -1,0 +1,10 @@
+- [ ] Parse HTTP request to get host address
+- [ ] Connect to remote web server
+- [ ] Send HTTP request
+- [ ] Accept response and forward to client
+- [ ] Encryption
+- [ ] Some sort of a user authentication method
+- [ ] UI? Probably CLI
+- [ ] Add TCP functionality...?
+- [ ] Tidy up code & add comments, split to functions
+- [ ] Project portfolio
