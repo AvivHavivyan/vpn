@@ -23,6 +23,26 @@ int WSAAPI getaddrinfo( const char*, const char*, const struct addrinfo*,
 int WSAAPI getnameinfo( const struct sockaddr*, socklen_t, char*, DWORD,
                         char*, DWORD, int );
 
+char * getHostAddress(char * request) {
+    char delimiter[] = " ";
+    strtok(request, delimiter);
+    char * address = strtok(NULL, delimiter);
+    return address;
+}
+
+char * getHostName(char * address) {
+    char delimiter[] = ":";
+    char * name = strtok(address, delimiter);
+    return name;
+}
+
+char * getPort(char * address) {
+    char delimiter[] = ":";
+    strtok(address, delimiter);
+    char * port = strtok(NULL, delimiter);
+    return port;
+}
+
 int main() {
 
     WSADATA wsaData; // Contains info about the winsock implementation.
@@ -59,9 +79,6 @@ int main() {
         return 1;
     }
 
-    iResult = getaddrinfo(NULL, HTTP_PORT, &hints, &http_result);
-    HttpSocket = INVALID_SOCKET;
-    HttpSocket = socket(http_result->ai_family, http_result->ai_socktype, http_result->ai_protocol);
 
     // Initialize the socket with desired values
     ListenSocket = INVALID_SOCKET;
@@ -161,10 +178,50 @@ int main() {
                     contentLength -= DEFAULT_BUFLEN;
                 }
             }
+            char messagecpy[strlen(message)];
+            strcpy(messagecpy, message);
+            char * hostaddress = getHostAddress(messagecpy);
+            char hostaddresscpy[strlen(hostaddress)];
+            strcpy(hostaddresscpy, hostaddress);
+            char * hostname = getHostName(hostaddresscpy);
+            char * port = getPort(hostaddress);
+            hints.ai_flags = 0;
 
-            connect(HttpSocket, http_result->ai_addr, http_result->ai_addrlen);
+            iResult = getaddrinfo(hostname, port, &hints, &http_result);
+            if (iResult != 0) {
+                printf("Failed to retrieve address data. \n");
+                WSACleanup();
+                return -1;
+            }
+            HttpSocket = socket(http_result->ai_family, http_result->ai_socktype, http_result->ai_protocol);
+            struct sockaddr_in  *sockaddr_ipv4;
+            sockaddr_ipv4 = (struct sockaddr_in *) http_result->ai_addr;
+            printf("\tIPv4 address %s\n", inet_ntoa(sockaddr_ipv4->sin_addr));
+            iResult = connect(HttpSocket, http_result->ai_addr, http_result->ai_addrlen);
 
-            send(HttpSocket, message, strlen(message), 0);
+            if (iResult != 0) {
+                printf("Failed to connect to remote server. \n");
+                WSACleanup();
+                return -1;
+            } else {
+                printf("Connected to remote server successfully on port %s. \n", port);
+            }
+
+            char messageterm[strlen(message) + 1];
+
+            strcat(messageterm, message);
+            messageterm[strlen(messageterm)] = '\0';
+//            printf("null terminated string: %s", messageterm);
+
+            iResult = send(HttpSocket,  message, strlen(message), 0);
+
+            if (iResult == SOCKET_ERROR) {
+                printf("Failed to send message to remote server. \n");
+                WSACleanup();
+                return -1;
+            } else {
+                printf("Bytes sent to remote webserver: %d \n", iResult);
+            }
 
             char * response;
 
@@ -176,12 +233,15 @@ int main() {
                 iResult = recv(HttpSocket, buffer, sizeof(buffer), 0);
                 if (iResult == SOCKET_ERROR)
                     return -1;
-                if (iResult == 0)
+                if (iResult == 0 && strcmp(response, "") != 0)
                     break;
-                strcat(response, buffer);
-                printf("Bytes received from Webserver: %d", iResult);
-                printf("Msg: %s", buffer);
-                bytesRecv += iResult;
+                if (iResult > 0) {
+                    strcat(response, buffer);
+                    printf("Bytes received from Webserver: %d \n", iResult);
+                    printf("Msg: %s \n", buffer);
+                    bytesRecv += iResult;
+                }
+
             }
 
 
