@@ -2,6 +2,8 @@
 #include <stdbool.h>
 #include <ws2tcpip.h>
 #include <stdio.h>
+#include <assert.h>
+
 //#include <openssl/bio.h>
 
 #define DEFAULT_PORT "27015"
@@ -30,6 +32,13 @@ char * getHostAddress(char * request) {
     return address;
 }
 
+char * getHttpHostAddress(char * request) {
+    char delimiter[] = "/";
+    strtok(request, delimiter);
+    char * address = strtok(NULL, delimiter);
+    return address;
+}
+
 char * getHostName(char * address) {
     char delimiter[] = ":";
     char * name = strtok(address, delimiter);
@@ -38,9 +47,117 @@ char * getHostName(char * address) {
 
 char * getPort(char * address) {
     char delimiter[] = ":";
-    strtok(address, delimiter);
+    char * token = strtok(address, delimiter);
     char * port = strtok(NULL, delimiter);
+    if (token == NULL) return NULL;
     return port;
+}
+
+char** str_split(char* a_str, const char a_delim)
+{
+    char** result    = 0;
+    size_t count     = 0;
+    char* last_comma = 0;
+    char delim[2];
+    delim[0] = a_delim;
+    delim[1] = 0;
+    char a_str_cpy[strlen(a_str)];
+    strcpy(a_str_cpy, a_str);
+    char* tmp = a_str_cpy;
+
+
+    /* Count how many elements will be extracted. */
+    while (*tmp)
+    {
+        if (a_delim == *tmp)
+        {
+            count++;
+            last_comma = tmp;
+        }
+        tmp++;
+    }
+
+    /* Add space for trailing token. */
+    count += last_comma < (a_str_cpy + strlen(a_str_cpy) - 1);
+
+    /* Add space for terminating null string so caller
+       knows where the list of returned strings ends. */
+    count++;
+
+    result = malloc(sizeof(char*) * count);
+
+    if (result)
+    {
+        size_t idx  = 0;
+        char* token = strtok(a_str_cpy, delim);
+
+        while (token)
+        {
+            assert(idx < count);
+            *(result + idx++) = strdup(token);
+            token = strtok(0, delim);
+        }
+        assert(idx == count - 1);
+        *(result + idx) = 0;
+    }
+
+    return result;
+}
+
+int checkMethodType(char * response) {
+    char * ret;
+    ret = strstr(response, "CONNECT");
+    if (ret) return 1;
+    else return 0;
+}
+
+int setUpServer(int iResult, struct addrinfo hints, struct addrinfo * result,  SOCKET *ListenSocket) {
+    // Resolve the local address and port to be used by the server
+    iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
+    if (iResult != 0) {
+        printf("getaddrinfo failed: %d\n", iResult);
+        WSACleanup(); // Terminate
+        return 1;
+    }
+
+    // Initialize the socket with desired values
+    *ListenSocket = INVALID_SOCKET;
+    *ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+    if (*ListenSocket == INVALID_SOCKET) {
+        printf("Error at socket(): %ld\n", WSAGetLastError());
+        freeaddrinfo(result);
+        WSACleanup();
+        return 1;
+    }
+
+    // Setup the TCP listening socket - bind.
+    iResult = bind(*ListenSocket, result->ai_addr, (int)result->ai_addrlen);
+    if (iResult == SOCKET_ERROR) {
+        printf("bind failed with error: %d\n", WSAGetLastError());
+        freeaddrinfo(result);
+        closesocket(*ListenSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    freeaddrinfo(result);
+    return 0;
+}
+
+int waitForConnections() {
+
+}
+
+char * receiveMessage() {
+
+}
+
+int connectToWebserver() {
+
+}
+
+int sendMessageToClient() {
+
 }
 
 int main() {
@@ -71,36 +188,7 @@ int main() {
     hints.ai_protocol = IPPROTO_TCP;
     hints.ai_flags = AI_PASSIVE;
 
-    // Resolve the local address and port to be used by the server
-    iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
-    if (iResult != 0) {
-        printf("getaddrinfo failed: %d\n", iResult);
-        WSACleanup(); // Terminate
-        return 1;
-    }
-
-
-    // Initialize the socket with desired values
-    ListenSocket = INVALID_SOCKET;
-    ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-    if (ListenSocket == INVALID_SOCKET) {
-        printf("Error at socket(): %ld\n", WSAGetLastError());
-        freeaddrinfo(result);
-        WSACleanup();
-        return 1;
-    }
-
-    // Setup the TCP listening socket - bind.
-    iResult = bind(ListenSocket, result->ai_addr, (int)result->ai_addrlen);
-    if (iResult == SOCKET_ERROR) {
-        printf("bind failed with error: %d\n", WSAGetLastError());
-        freeaddrinfo(result);
-        closesocket(ListenSocket);
-        WSACleanup();
-        return 1;
-    }
-
-    freeaddrinfo(result);
+    setUpServer(iResult, hints, result, &ListenSocket);
 
     // New connections loop
     listen:
@@ -143,6 +231,7 @@ int main() {
         contentLength = ntohl(netContentLength);
         char message[contentLength];
         memset(message, 0, strlen(message));
+        printf("Content length: %d \n", contentLength);
 
         if (iResult > 0) {
             while (!received) {
@@ -157,12 +246,25 @@ int main() {
                 if (contentLength < DEFAULT_BUFLEN) {
                     iResult = recv(ClientSocket, recvbuf, contentLength + 1, 0);
                     strcat(message,recvbuf);
-                    printf("Message: %s \n", message);
-                    printf("Content length: %d\n", contentLength);
-                    printf("Received %d bytes\n", iResult);
-                    printf("Recvbuf length: %d\n", strlen(recvbuf));
-                    printf("Recvbuf: %s\n", recvbuf);
+//                    printf("ContentLength: %d \n", contentLength);
+//                    printf(message);
+                    char messagecopy[strlen(message)];
+                    strncpy(messagecopy, message, strlen(message));
+//                    strcpy(messagecopy, message);
+                    char** tokens;
+                    tokens = str_split(messagecopy, '\n');
 
+//                    if (tokens)
+//                    {
+//                        int i;
+//                        for (i = 0; *(tokens + i); i++)
+//                        {
+//                            printf("line=%s\n", *(tokens + i));
+//                            free(*(tokens + i));
+//                        }
+//                        printf("\n");
+//                        free(tokens);
+//                    }
 
                     if (strcmp(recvbuf, "exit") == 0) {
                         printf("Closing connection... \n");
@@ -176,18 +278,34 @@ int main() {
                     // Add the current "chunk" to the full message.
                     strcat(message,recvbuf);
                     contentLength -= DEFAULT_BUFLEN;
+                    printf("ContentLength: %d \n", contentLength);
+
                 }
             }
+            printf(message);
+
+
             char messagecpy[strlen(message)];
             strcpy(messagecpy, message);
             char * hostaddress = getHostAddress(messagecpy);
+            char hostaddresscopy[strlen(hostaddress)];
             char hostaddresscpy[strlen(hostaddress)];
             strcpy(hostaddresscpy, hostaddress);
+            strcpy(hostaddresscopy, hostaddress);
+
             char * hostname = getHostName(hostaddresscpy);
             char * port = getPort(hostaddress);
             hints.ai_flags = 0;
 
-            iResult = getaddrinfo(hostname, port, &hints, &http_result);
+            if (strcmp(port, "443") != 0) {
+                port = "80";
+                char * http_host_address = getHttpHostAddress(hostaddresscopy);
+                printf("http host address: %s \n", http_host_address);
+                iResult = getaddrinfo(http_host_address, port, &hints, &http_result);
+            } else {
+                iResult = getaddrinfo(hostname, port, &hints, &http_result);
+            }
+
             if (iResult != 0) {
                 printf("Failed to retrieve address data. \n");
                 WSACleanup();
@@ -207,14 +325,24 @@ int main() {
                 printf("Connected to remote server successfully on port %s. \n", port);
             }
 
-            char messageterm[strlen(message) + 1];
-
-            strcat(messageterm, message);
-            messageterm[strlen(messageterm)] = '\0';
-//            printf("null terminated string: %s", messageterm);
-
+            if (checkMethodType(message) == 1) {
+                printf("CONNECT method. \n");
+                char * connect = "HTTP/1.1 200 OK \r\n\r\n";
+                contentLength = strlen(connect);
+                netContentLength = htonl(contentLength);
+                send(ClientSocket, &netContentLength, 4, 0);
+                send(ClientSocket, connect, strlen(connect), 0);
+//                memset(connect, 0, strlen(connect));
+                continue;
+            }
+//
+//            char messageterm[strlen(message) + 1];
+//
+//            strcat(messageterm, message);
+//            messageterm[strlen(messageterm)] = '\0';
+////            printf("null terminated string: %s", messageterm);
+//
             iResult = send(HttpSocket,  message, strlen(message), 0);
-
             if (iResult == SOCKET_ERROR) {
                 printf("Failed to send message to remote server. \n");
                 WSACleanup();
@@ -223,27 +351,45 @@ int main() {
                 printf("Bytes sent to remote webserver: %d \n", iResult);
             }
 
-            char * response;
 
-            char buffer[50];
+
+            char * response;
+            memset(response, 0, strlen(response));
+            int cnt = 0;
+
+//            printf("%s \n", message);
+//            printf("count: %d \n", cnt);
+
+            char buffer[10000];
             int bytesRecv = 0;
 
-            for (;;)
-            {
-                iResult = recv(HttpSocket, buffer, sizeof(buffer), 0);
-                if (iResult == SOCKET_ERROR)
-                    return -1;
-                if (iResult == 0 && strcmp(response, "") != 0)
-                    break;
+            while (!(iResult == 0 && strlen(response) != 0)) {
+                iResult = recv(HttpSocket, buffer, strlen(buffer), 0);
                 if (iResult > 0) {
                     strcat(response, buffer);
                     printf("Bytes received from Webserver: %d \n", iResult);
                     printf("Msg: %s \n", buffer);
                     bytesRecv += iResult;
+                    memset(buffer, 0, 10000);
+                    iResult = 0;
                 }
-
+                else if (iResult == SOCKET_ERROR)
+                    return -1;
             }
 
+            printf("Full message: %s \n", response);
+
+//            int nDataLength;
+//            while ((nDataLength = recv(HttpSocket,buffer,100,0)) > 0){
+//                int i = 0;
+//                strcat(website_HTML, buffer);
+////                while (buffer[i] >= 32 || buffer[i] == '\n' || buffer[i] == '\r'){
+////                    strcat()
+////
+////                    website_HTML+=buffer[i];
+////                    i += 1;
+////                }
+//            }
 
             // Echo back the message in 512 byte chunks.
             received = false;
