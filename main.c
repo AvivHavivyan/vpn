@@ -34,19 +34,30 @@ char * getHostAddress(char * request) {
 
 char * getHttpHostAddress(char * request) {
     char delimiter[] = "/";
+    char requestcpy[strlen(request)];
     strtok(request, delimiter);
     char * address = strtok(NULL, delimiter);
     return address;
 }
 
 char * getHostName(char * address) {
-    char delimiter[] = ":";
-    char * name = strtok(address, delimiter);
+    char * name;
+    char addrcpy[strlen(address)];
+    strncpy(addrcpy, address, strlen(address));
+    if (strstr("http", address)) {
+        char delimiter[] = ":";
+        strtok(address, delimiter);
+        name = (NULL, delimiter);
+    } else {
+        char delimiter[] = ":";
+        name = strtok(address, delimiter);
+    }
     return name;
 }
 
 char * getPort(char * address) {
     char delimiter[] = ":";
+    char addrcpy[strlen(address)];
     char * token = strtok(address, delimiter);
     char * port = strtok(NULL, delimiter);
     if (token == NULL) return NULL;
@@ -106,9 +117,24 @@ char** str_split(char* a_str, const char a_delim)
 
 int checkMethodType(char * response) {
     char * ret;
+    char rspcpy[strlen(response)];
+//    strncpy(rspcpy, reso)
     ret = strstr(response, "CONNECT");
     if (ret) return 1;
     else return 0;
+}
+
+char * getContentLength(char * response) {
+    char * header = "Content-Length";
+    char rspcpy[strlen(response)];
+//    strncpy(rspcpy, response, strlen(response));
+    char * substr = strstr(response, header);
+    char * delim = "\n";
+    char * header_line = strtok(substr, delim);
+    delim = " ";
+    char * len_str = strtok(header_line, delim);
+    printf("length: %s", len_str);
+    return len_str;
 }
 
 int setUpServer(int iResult, struct addrinfo hints, struct addrinfo * result,  SOCKET *ListenSocket) {
@@ -160,6 +186,271 @@ int sendMessageToClient() {
 
 }
 
+int handleHTTP() {
+
+}
+
+int thread(SOCKET *ClientSocket, SOCKET *HttpSocket, SOCKET *ListenSocket, struct addrinfo hints, struct addrinfo * http_result) {
+
+    int iResult = 0;
+listen:
+    // Listen for connections
+    printf("Listening... ");
+    if (listen(*ListenSocket, SOMAXCONN) == SOCKET_ERROR) {
+        printf("Listen failed with error: %d\n", WSAGetLastError());
+        closesocket(*ListenSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    *ClientSocket = INVALID_SOCKET;
+    // Accept a client socket
+    *ClientSocket = accept(*ListenSocket, NULL, NULL);
+    if (*ClientSocket == INVALID_SOCKET) {
+        closesocket(*ListenSocket);
+        WSACleanup();
+        return 1;
+    } else {
+        printf("Connected. \n");
+    }
+    while (true) {
+        bool received = false;
+        printf("Waiting... \n");
+        // Converting from big endian to little endian.
+        // Integers are sent as big endians while many processors use little endian,
+        // thus conversion is necessary.
+        u_long netContentLength = 0;
+        int contentLength;
+        iResult = 0;
+        while (iResult == 0) {
+            iResult = recv(*ClientSocket, &netContentLength, 4, 0);
+        }
+        contentLength = ntohl(netContentLength);
+        char message[contentLength];
+        memset(message, 0, strlen(message));
+        printf("Content length: %d \n", contentLength);
+        if (contentLength == 0) {
+            printf("Connection terminated unexpectedly.");
+            closesocket(*ClientSocket);
+//            WSACleanup();
+            goto listen;
+        }
+
+        if (iResult > 0) {
+            while (!received) {
+                char recvbuf[DEFAULT_BUFLEN];
+
+                // Initializing recvbuf to get rid of garbage mem.
+                memset(recvbuf, 0, DEFAULT_BUFLEN);
+
+                // If the length of the content in the current iteration
+                // is smaller than the buffer size, the current "chunk" is the last.
+                // Add handle connection exceptions
+                if (contentLength < DEFAULT_BUFLEN) {
+                    iResult = recv(*ClientSocket, recvbuf, contentLength + 1, 0);
+                    strcat(message,recvbuf);
+                    char messagecopy[strlen(message)];
+                    strncpy(messagecopy, message, strlen(message));
+                    char** tokens;
+//                    tokens = str_split(messagecopy, '\n');
+
+//                    if (tokens)
+//                    {
+//                        int i;
+//                        for (i = 0; *(tokens + i); i++)
+//                        {
+//                            printf("line=%s\n", *(tokens + i));
+//                            free(*(tokens + i));
+//                        }
+//                        printf("\n");
+//                        free(tokens);
+//                    }
+
+                    if (strcmp(recvbuf, "exit") == 0) {
+                        printf("Closing connection... \n");
+                        closesocket(*ClientSocket);
+                        goto listen;
+                    }
+
+                    received = true;
+                } else {
+                    recv(*ClientSocket, recvbuf, DEFAULT_BUFLEN, 0);
+                    // Add the current "chunk" to the full message.
+                    strcat(message,recvbuf);
+                    contentLength -= DEFAULT_BUFLEN;
+                    printf("ContentLength: %d \n", contentLength);
+
+                }
+            }
+            printf("%s", message);
+
+
+            char messagecpy[strlen(message)];
+            strncpy(messagecpy, message, strlen(message));
+            char * hostaddress = getHostAddress(messagecpy);
+            char hostaddresscopy[strlen(hostaddress)];
+            char hostaddresscpy[strlen(hostaddress)];
+            strcpy(hostaddresscpy, hostaddress);
+            strcpy(hostaddresscopy, hostaddress);
+
+            char * hostname = getHostName(hostaddresscpy);
+            char * port = getPort(hostaddress);
+            hints.ai_flags = 0;
+
+            if (strcmp(port, "443") != 0) {
+                port = "80";
+                char * http_host_address = getHttpHostAddress(hostaddresscopy);
+                printf("http host address: %s \n", http_host_address);
+                iResult = getaddrinfo(http_host_address, port, &hints, &http_result);
+                if (iResult != 0) {
+                    iResult = getaddrinfo(hostaddress, port, &hints, &http_result);
+                    printf("http host address: %s \n", hostaddress);
+
+                }
+            } else {
+                iResult = getaddrinfo(hostname, port, &hints, &http_result);
+            }
+
+            if (iResult != 0) {
+                printf("Failed to retrieve address data. \n");
+//                WSACleanup();
+                break;
+            }
+            *HttpSocket = socket(http_result->ai_family, http_result->ai_socktype, http_result->ai_protocol);
+            struct sockaddr_in  *sockaddr_ipv4;
+            sockaddr_ipv4 = (struct sockaddr_in *) http_result->ai_addr;
+            printf("\tIPv4 address %s\n", inet_ntoa(sockaddr_ipv4->sin_addr));
+            iResult = connect(*HttpSocket, http_result->ai_addr, http_result->ai_addrlen);
+
+            if (iResult != 0) {
+                printf("Failed to connect to remote server. \n");
+                WSACleanup();
+                return -1;
+            } else {
+                printf("Connected to remote server successfully on port %s. \n", port);
+            }
+
+            if (checkMethodType(message) == 1) {
+                printf("CONNECT method. \n");
+                char * connect = "HTTP/1.1 200 Connection Established \r\n\r\n";
+                contentLength = strlen(connect);
+                netContentLength = htonl(contentLength);
+                send(*ClientSocket, &netContentLength, 4, 0);
+                send(*ClientSocket, connect, strlen(connect), 0);
+                closesocket(*ClientSocket);
+//                memset(connect, 0, strlen(connect));
+                goto listen;
+            }
+
+            iResult = send(*HttpSocket,  message, strlen(message), 0);
+            if (iResult == SOCKET_ERROR) {
+                printf("Failed to send message to remote server. \n");
+//                WSACleanup();
+                return -1;
+            } else {
+                printf("Bytes sent to remote webserver: %d \n", iResult);
+            }
+
+            //allocate base size/length
+
+            char *response = (char *) malloc(sizeof(char *));
+
+//            free(response);
+//            memset(response, 0, strlen(response));
+            int cnt = 0;
+
+            char buffer[1024];
+            memset(buffer, 0, 1024);
+
+            int bytesRecv = 0;
+            iResult = 1024;
+
+            // wait for the end of http headers
+
+            while (!strstr(buffer, "\r\n\r\n")) {
+                memset(buffer, 0, 1024);
+
+                iResult = recv(*HttpSocket, buffer, 1024, 0);
+                strncat(response, buffer, strlen(buffer));
+                printf("Bytes received from Webserver: %d \n", iResult);
+                if (iResult == 0) {
+                    goto listen;
+                }
+                printf("Msg: %s \n", buffer);
+                bytesRecv += iResult;
+//                    memset(buffer, 0, 1024);
+                if (iResult == SOCKET_ERROR)
+                    return -1;
+            }
+            char rspcpy[strlen(response)];
+            strcpy(rspcpy, response);
+
+            if (strstr("Content-Length", response)) {
+                getContentLength(rspcpy);
+            }
+
+            printf("Full message: %s \n", response);
+
+            // Echo back the message in 512 byte chunks.
+            received = false;
+            int startIndex = 0;
+            int endIndex = DEFAULT_BUFLEN - 1;
+
+            contentLength = strlen(response);
+            int originalContentLength = contentLength;
+            char * msg = message;
+
+            netContentLength = htonl(contentLength);
+            send(*ClientSocket, &netContentLength, 4, 0);
+
+            while (!received) {
+                if (contentLength < DEFAULT_BUFLEN) {
+                    endIndex = originalContentLength;
+                }
+                char curMessage[endIndex - startIndex + 1];
+                memset(curMessage, 0, DEFAULT_BUFLEN);
+                // Allocating space for an array with a certain number of elements.
+                // Copy the current chunk to curMessage
+                strncpy(curMessage, &response[startIndex], endIndex - startIndex);
+                // Move to the next chunk
+
+
+                // Echo the buffer back to the sender
+                // When there's still more than 512 bytes left,
+                // subtract the maximum buflen to account for the number of bytes left and send to client.
+                if (contentLength > DEFAULT_BUFLEN) {
+                    iResult = send(*ClientSocket, curMessage, DEFAULT_BUFLEN, 0);
+                    startIndex = endIndex;
+                    endIndex = endIndex + DEFAULT_BUFLEN;
+                }
+                    // Getting to a number smaller or equal to the maximum buflen,
+                    // means we have reached the end of the message.
+                else if (contentLength <= DEFAULT_BUFLEN) {
+                    iResult = send(*ClientSocket, curMessage, strlen(curMessage), 0);
+//                    received = true;
+                    closesocket(*HttpSocket);
+                    closesocket(*ClientSocket);
+                    memset(response, 0, strlen(response));
+                    goto listen;
+                }
+
+                contentLength -= DEFAULT_BUFLEN;
+
+
+                if (iResult == SOCKET_ERROR) {
+                    printf("send failed: %d\n", WSAGetLastError());
+                    printf("The connection was terminated unexpectedly. Shutting down... \n");
+                    goto listen;
+                }
+            }
+
+        } else {
+            printf("The connection was terminated unexpectedly. Shutting down... \n");
+            goto listen; // Go to the label accepting a new connection.
+        }
+    }
+}
+
 int main() {
 
     WSADATA wsaData; // Contains info about the winsock implementation.
@@ -190,254 +481,8 @@ int main() {
 
     setUpServer(iResult, hints, result, &ListenSocket);
 
-    // New connections loop
-    listen:
 
-    // Listen for connections
-    printf("Listening... ");
-    if (listen(ListenSocket, SOMAXCONN) == SOCKET_ERROR) {
-        printf("Listen failed with error: %d\n", WSAGetLastError());
-        closesocket(ListenSocket);
-        WSACleanup();
-        return 1;
-    }
+    //main thread, handles client requests and http.
+    thread(&ClientSocket, &HttpSocket, &ListenSocket, hints, http_result);
 
-    ClientSocket = INVALID_SOCKET;
-    // Accept a client socket
-    ClientSocket = accept(ListenSocket, NULL, NULL);
-    if (ClientSocket == INVALID_SOCKET) {
-        closesocket(ListenSocket);
-        WSACleanup();
-        return 1;
-    } else {
-        printf("Connected. \n");
-    }
-
-    // The full message / packet.
-
-    // Main server loop, wait for input
-    while (true) {
-        bool received = false;
-        printf("Waiting... \n");
-        // Converting from big endian to little endian.
-        // Integers are sent as big endians while many processors use little endian,
-        // thus conversion is necessary.
-        u_long netContentLength = 0;
-        int contentLength;
-        iResult = 0;
-        while (iResult == 0) {
-            iResult = recv(ClientSocket, &netContentLength, 4, 0);
-        }
-        contentLength = ntohl(netContentLength);
-        char message[contentLength];
-        memset(message, 0, strlen(message));
-        printf("Content length: %d \n", contentLength);
-
-        if (iResult > 0) {
-            while (!received) {
-                char recvbuf[DEFAULT_BUFLEN];
-
-                // Initializing recvbuf to get rid of garbage mem.
-                memset(recvbuf, 0, DEFAULT_BUFLEN);
-
-                // If the length of the content in the current iteration
-                // is smaller than the buffer size, the current "chunk" is the last.
-                // Add handle connection exceptions
-                if (contentLength < DEFAULT_BUFLEN) {
-                    iResult = recv(ClientSocket, recvbuf, contentLength + 1, 0);
-                    strcat(message,recvbuf);
-//                    printf("ContentLength: %d \n", contentLength);
-//                    printf(message);
-                    char messagecopy[strlen(message)];
-                    strncpy(messagecopy, message, strlen(message));
-//                    strcpy(messagecopy, message);
-                    char** tokens;
-                    tokens = str_split(messagecopy, '\n');
-
-//                    if (tokens)
-//                    {
-//                        int i;
-//                        for (i = 0; *(tokens + i); i++)
-//                        {
-//                            printf("line=%s\n", *(tokens + i));
-//                            free(*(tokens + i));
-//                        }
-//                        printf("\n");
-//                        free(tokens);
-//                    }
-
-                    if (strcmp(recvbuf, "exit") == 0) {
-                        printf("Closing connection... \n");
-                        closesocket(ClientSocket);
-                        goto listen;
-                    }
-
-                    received = true;
-                } else {
-                    recv(ClientSocket, recvbuf, DEFAULT_BUFLEN, 0);
-                    // Add the current "chunk" to the full message.
-                    strcat(message,recvbuf);
-                    contentLength -= DEFAULT_BUFLEN;
-                    printf("ContentLength: %d \n", contentLength);
-
-                }
-            }
-            printf(message);
-
-
-            char messagecpy[strlen(message)];
-            strcpy(messagecpy, message);
-            char * hostaddress = getHostAddress(messagecpy);
-            char hostaddresscopy[strlen(hostaddress)];
-            char hostaddresscpy[strlen(hostaddress)];
-            strcpy(hostaddresscpy, hostaddress);
-            strcpy(hostaddresscopy, hostaddress);
-
-            char * hostname = getHostName(hostaddresscpy);
-            char * port = getPort(hostaddress);
-            hints.ai_flags = 0;
-
-            if (strcmp(port, "443") != 0) {
-                port = "80";
-                char * http_host_address = getHttpHostAddress(hostaddresscopy);
-                printf("http host address: %s \n", http_host_address);
-                iResult = getaddrinfo(http_host_address, port, &hints, &http_result);
-            } else {
-                iResult = getaddrinfo(hostname, port, &hints, &http_result);
-            }
-
-            if (iResult != 0) {
-                printf("Failed to retrieve address data. \n");
-                WSACleanup();
-                return -1;
-            }
-            HttpSocket = socket(http_result->ai_family, http_result->ai_socktype, http_result->ai_protocol);
-            struct sockaddr_in  *sockaddr_ipv4;
-            sockaddr_ipv4 = (struct sockaddr_in *) http_result->ai_addr;
-            printf("\tIPv4 address %s\n", inet_ntoa(sockaddr_ipv4->sin_addr));
-            iResult = connect(HttpSocket, http_result->ai_addr, http_result->ai_addrlen);
-
-            if (iResult != 0) {
-                printf("Failed to connect to remote server. \n");
-                WSACleanup();
-                return -1;
-            } else {
-                printf("Connected to remote server successfully on port %s. \n", port);
-            }
-
-            if (checkMethodType(message) == 1) {
-                printf("CONNECT method. \n");
-                char * connect = "HTTP/1.1 200 OK \r\n\r\n";
-                contentLength = strlen(connect);
-                netContentLength = htonl(contentLength);
-                send(ClientSocket, &netContentLength, 4, 0);
-                send(ClientSocket, connect, strlen(connect), 0);
-//                memset(connect, 0, strlen(connect));
-                continue;
-            }
-//
-//            char messageterm[strlen(message) + 1];
-//
-//            strcat(messageterm, message);
-//            messageterm[strlen(messageterm)] = '\0';
-////            printf("null terminated string: %s", messageterm);
-//
-            iResult = send(HttpSocket,  message, strlen(message), 0);
-            if (iResult == SOCKET_ERROR) {
-                printf("Failed to send message to remote server. \n");
-                WSACleanup();
-                return -1;
-            } else {
-                printf("Bytes sent to remote webserver: %d \n", iResult);
-            }
-
-
-
-            char * response;
-            memset(response, 0, strlen(response));
-            int cnt = 0;
-
-//            printf("%s \n", message);
-//            printf("count: %d \n", cnt);
-
-            char buffer[10000];
-            int bytesRecv = 0;
-
-            while (!(iResult == 0 && strlen(response) != 0)) {
-                iResult = recv(HttpSocket, buffer, strlen(buffer), 0);
-                if (iResult > 0) {
-                    strcat(response, buffer);
-                    printf("Bytes received from Webserver: %d \n", iResult);
-                    printf("Msg: %s \n", buffer);
-                    bytesRecv += iResult;
-                    memset(buffer, 0, 10000);
-                    iResult = 0;
-                }
-                else if (iResult == SOCKET_ERROR)
-                    return -1;
-            }
-
-            printf("Full message: %s \n", response);
-
-//            int nDataLength;
-//            while ((nDataLength = recv(HttpSocket,buffer,100,0)) > 0){
-//                int i = 0;
-//                strcat(website_HTML, buffer);
-////                while (buffer[i] >= 32 || buffer[i] == '\n' || buffer[i] == '\r'){
-////                    strcat()
-////
-////                    website_HTML+=buffer[i];
-////                    i += 1;
-////                }
-//            }
-
-            // Echo back the message in 512 byte chunks.
-            received = false;
-            int startIndex = 0;
-            int endIndex = DEFAULT_BUFLEN - 1;
-
-            contentLength = strlen(message);
-            netContentLength = htonl(contentLength);
-            send(ClientSocket, &netContentLength, 4, 0);
-
-            while (!received) {
-
-                char curMessage[endIndex - startIndex + 1];
-                memset(curMessage, 0, DEFAULT_BUFLEN);
-                // Allocating space for an array with a certain number of elements.
-                // Copy the current chunk to curMessage
-                strncpy(curMessage, &message[startIndex], endIndex - startIndex);
-                // Move to the next chunk
-                startIndex = endIndex;
-                endIndex = endIndex + DEFAULT_BUFLEN;
-
-                // Echo the buffer back to the sender
-                // When there's still more than 512 bytes left,
-                // subtract the maximum buflen to account for the number of bytes left and send to client.
-                if (contentLength > DEFAULT_BUFLEN) {
-                    contentLength -= DEFAULT_BUFLEN;
-                    send(ClientSocket, curMessage, DEFAULT_BUFLEN, 0);
-                }
-                // Getting to a number smaller or equal to the maximum buflen,
-                // means we have reached the end of the message.
-                else if (contentLength <= DEFAULT_BUFLEN) {
-                    send(ClientSocket, curMessage, strlen(curMessage), 0);
-                    received = true;
-                }
-
-                if (iResult == SOCKET_ERROR) {
-                    printf("send failed: %d\n", WSAGetLastError());
-//                    closesocket(ClientSocket);
-//                    WSACleanup();
-                    printf("The connection was terminated unexpectedly. Shutting down... \n");
-                    goto listen;
-                    return 1;
-                }
-            }
-
-        } else {
-            printf("The connection was terminated unexpectedly. Shutting down... \n");
-            goto listen; // Go to the label accepting a new connection.
-        }
-    }
 }
