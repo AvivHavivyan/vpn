@@ -3,11 +3,10 @@
 #include <ws2tcpip.h>
 #include <stdio.h>
 #include <assert.h>
-
-//#include <openssl/bio.h>
+#include <ctype.h>
+#include "utils.h"
 
 #define DEFAULT_PORT "27015"
-#define HTTP_PORT "443"
 #define DEFAULT_BUFLEN 512
 
 // Need to link with Ws2_32.lib, Mswsock.lib, and Advapi32.lib
@@ -124,18 +123,25 @@ int checkMethodType(char * response) {
     else return 0;
 }
 
-char * getContentLength(char * response) {
-    char * header = "Content-Length";
+
+
+int getContentLength(char * response) {
+    char * header = "content-length";
     char rspcpy[strlen(response)];
-//    strncpy(rspcpy, response, strlen(response));
-    char * substr = strstr(response, header);
+    strcpy(rspcpy, response);
+    header = lowerstring(rspcpy);
+    char * substr = strstr(rspcpy, header);
     char * delim = "\n";
     char * header_line = strtok(substr, delim);
-    delim = " ";
-    char * len_str = strtok(header_line, delim);
-    printf("length: %s", len_str);
-    return len_str;
+    delim = ":";
+    strtok(header_line, delim);
+    printf("lenstr: %s", header_line);
+
+    char * len_str = strtok(NULL, delim);
+    return atoi(len_str);
 }
+
+
 
 int setUpServer(int iResult, struct addrinfo hints, struct addrinfo * result,  SOCKET *ListenSocket) {
     // Resolve the local address and port to be used by the server
@@ -190,7 +196,7 @@ int handleHTTP() {
 
 }
 
-int thread(SOCKET *ClientSocket, SOCKET *HttpSocket, SOCKET *ListenSocket, struct addrinfo hints, struct addrinfo * http_result) {
+int thread(SOCKET *ClientSocket, SOCKET *HttpSocket, const SOCKET *ListenSocket, struct addrinfo hints, struct addrinfo * http_result) {
 
     int iResult = 0;
 listen:
@@ -247,7 +253,7 @@ listen:
                 // is smaller than the buffer size, the current "chunk" is the last.
                 // Add handle connection exceptions
                 if (contentLength < DEFAULT_BUFLEN) {
-                    iResult = recv(*ClientSocket, recvbuf, contentLength + 1, 0);
+                    recv(*ClientSocket, recvbuf, contentLength + 1, 0);
                     strcat(message,recvbuf);
                     char messagecopy[strlen(message)];
                     strncpy(messagecopy, message, strlen(message));
@@ -282,8 +288,8 @@ listen:
 
                 }
             }
-            printf("%s", message);
 
+            printf("%s", message);
 
             char messagecpy[strlen(message)];
             strncpy(messagecpy, message, strlen(message));
@@ -313,7 +319,6 @@ listen:
 
             if (iResult != 0) {
                 printf("Failed to retrieve address data. \n");
-//                WSACleanup();
                 break;
             }
             *HttpSocket = socket(http_result->ai_family, http_result->ai_socktype, http_result->ai_protocol);
@@ -345,7 +350,6 @@ listen:
             iResult = send(*HttpSocket,  message, strlen(message), 0);
             if (iResult == SOCKET_ERROR) {
                 printf("Failed to send message to remote server. \n");
-//                WSACleanup();
                 return -1;
             } else {
                 printf("Bytes sent to remote webserver: %d \n", iResult);
@@ -353,10 +357,10 @@ listen:
 
             //allocate base size/length
 
-            char *response = (char *) malloc(sizeof(char *));
+            char *response = (char *) malloc(1024);
 
 //            free(response);
-//            memset(response, 0, strlen(response));
+            memset(response, 0, strlen(response));
             int cnt = 0;
 
             char buffer[1024];
@@ -371,22 +375,61 @@ listen:
                 memset(buffer, 0, 1024);
 
                 iResult = recv(*HttpSocket, buffer, 1024, 0);
+                bytesRecv += iResult;
+                if (bytesRecv > strlen(response)) {
+                    realloc(response, strlen(response) + 1024);
+                }
                 strncat(response, buffer, strlen(buffer));
                 printf("Bytes received from Webserver: %d \n", iResult);
                 if (iResult == 0) {
                     goto listen;
                 }
                 printf("Msg: %s \n", buffer);
-                bytesRecv += iResult;
 //                    memset(buffer, 0, 1024);
                 if (iResult == SOCKET_ERROR)
                     return -1;
             }
             char rspcpy[strlen(response)];
+            char rspcpy2[strlen(response)];
             strcpy(rspcpy, response);
+            strcpy(rspcpy2, response);
 
-            if (strstr("Content-Length", response)) {
-                getContentLength(rspcpy);
+            if (strstr(lowerstring(rspcpy), "content-length")) {
+                int len = getContentLength(rspcpy2);
+                printf("%d", len);
+                char buff[len];
+                int total_bytes_received = 0;
+                while (total_bytes_received < len) {
+                    total_bytes_received += recv(*HttpSocket, buff, len, 0);
+                    strcat(response, buff);
+                    memset(response, 0, strlen(response));
+                }
+            } else if (strstr(lowerstring(rspcpy), "transfer-encoding")){
+
+                while (!strstr(buffer, "\r\n")) {
+                    memset(buffer, 0, 1024);
+
+                    iResult = recv(*HttpSocket, buffer, 1024, 0);
+                    bytesRecv += iResult;
+                    if (bytesRecv > strlen(response)) {
+                        realloc(response, strlen(response) + 1024);
+                    }
+                    strncat(response, buffer, strlen(buffer));
+                    printf("Bytes received from Webserver: %d \n", iResult);
+                    if (iResult == 0) {
+                        goto listen;
+                    }
+                    printf("Msg: %s \n", buffer);
+//                    memset(buffer, 0, 1024);
+                    if (iResult == SOCKET_ERROR)
+                        return -1;
+                }
+//                char chunk_len[8];
+//                int len = 0;
+//                recv(*HttpSocket, chunk_len, strlen(chunk_len), 0);
+//                len = atoi(chunk_len);
+//                printf("chunk len: %d", len);
+
             }
 
             printf("Full message: %s \n", response);
