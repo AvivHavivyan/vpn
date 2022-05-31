@@ -301,7 +301,7 @@ listen:
 
             char * hostname = getHostName(hostaddresscpy);
             char * port = getPort(hostaddress);
-added            strcpy(hostaddress, hostaddresscopy);
+            strcpy(hostaddress, hostaddresscopy);
             hints.ai_flags = 0;
 
             if (strcmp(port, "443") != 0) {
