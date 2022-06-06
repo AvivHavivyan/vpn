@@ -5,14 +5,18 @@
 #include <assert.h>
 #include <openssl/rsa.h>
 #include <openssl/bio.h>
-
+#include <openssl/pem.h>
 #include "utils.h"
 
 
 #define DEFAULT_PORT "27015"
 #define HTTP_PORT "443"
-#define DEFAULT_BUFLEN 512
+#define DEFAULT_BUFLEN 214
 #define KEY_LEN 256
+#define PEM_FILE_LEN 451
+#define PRIVATE_KEY_PATH "private_server.pem"
+#define PUBLIC_KEY_PATH "public_server.pem"
+#define CLIENT_KEY_PATH "clientkey_server.pem"
 
 // Need to link with Ws2_32.lib, Mswsock.lib, and Advapi32.lib
 #pragma comment (lib, "Ws2_32.lib")
@@ -119,12 +123,6 @@ int getContentLength(char * response) {
     return atoi(len_str);
 }
 
-int getChunkLength(char * response, int len) {
-    char respcpy[len];
-    memset(respcpy, 0, len);
-    memcpy(respcpy, response, len);
-}
-
 int setUpListenSocket(int iResult, struct addrinfo hints, struct addrinfo * result, SOCKET *ListenSocket) {
     // Resolve the local address and port to be used by the server
     iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
@@ -162,18 +160,6 @@ int handleHttps(char * request) {
 
 }
 
-int encrypt(char * msg) {
-
-}
-
-int decrypt(char * msg) {
-
-}
-
-int sendKey() {
-
-}
-
 int acceptConnection(int key) {
 
 }
@@ -201,18 +187,20 @@ int genKey() {
 
     const unsigned char test[4] = "Test";
     u_char encrypted[RSA_size(key)];
-    RSA_public_encrypt(4, test, encrypted, key, RSA_PKCS1_OAEP_PADDING);
+    RSA_public_encrypt(4, test, encrypted, public, RSA_PKCS1_OAEP_PADDING);
     u_char decrypted[4];
-    RSA_private_decrypt(256, encrypted, decrypted, key, RSA_PKCS1_OAEP_PADDING);
+    RSA_private_decrypt(KEY_LEN, encrypted, decrypted, key, RSA_PKCS1_OAEP_PADDING);
 
 
     FILE *fptr;
-    fptr = fopen("C:\\Users\\Aviv\\private_server.pem","wb");
-    fwrite(private, 1, 256, fptr);
+    fptr = fopen(PRIVATE_KEY_PATH,"wb");
+
+    fwrite(private, 1, KEY_LEN, fptr);
     fclose(fptr);
 
-    fptr = fopen("C:\\Users\\Aviv\\public_server.pem","wb");
-    fwrite(public, 1, 256, fptr);
+    fptr = fopen(PUBLIC_KEY_PATH,"wb");
+    PEM_write_RSA_PUBKEY(fptr, key);
+
     fclose(fptr);
 
     return 0;
@@ -237,12 +225,14 @@ int keysExchange(SOCKET *ListenSocket, SOCKET *ClientSocketAuth, struct addrinfo
         WSACleanup();
         return -1;
     } else {
-        printf("Connected. \n");
+        printf("Connected for key exchange. \n");
     }
 
     u_long netContentLength = 0;
     int contentLength;
     iResult = 0;
+    int bytesRecv = 0;
+
     while (iResult == 0) {
         iResult = recv(*ClientSocketAuth, &netContentLength, 4, 0);
     }
@@ -268,9 +258,8 @@ int keysExchange(SOCKET *ListenSocket, SOCKET *ClientSocketAuth, struct addrinfo
 
         FILE *fptr;
         long length;
-//        RSA * keypair;
 
-        fptr = fopen("C:\\Users\\Aviv\\public_server.pem","rb");
+        fptr = fopen(PUBLIC_KEY_PATH,"rb");
         if (fptr)
         {
             fseek (fptr, 0, SEEK_END);
@@ -282,10 +271,8 @@ int keysExchange(SOCKET *ListenSocket, SOCKET *ClientSocketAuth, struct addrinfo
                 fread (buffer, 1, length, fptr);
             }
             fclose (fptr);
-            send(*ClientSocketAuth, buffer, 256, 0);
-//            closesocket(*ClientSocketAuth);
-//            closesocket(*ListenSocket);
-//            return 0;
+
+            send(*ClientSocketAuth, buffer, length, 0);
         }
 
     } else {
@@ -295,40 +282,83 @@ int keysExchange(SOCKET *ListenSocket, SOCKET *ClientSocketAuth, struct addrinfo
     }
 
     // RECEIVE KEY
-    char publicKeyClient[KEY_LEN];
+    char publicKeyClient[PEM_FILE_LEN];
+    char publicKeyClientBuffer[PEM_FILE_LEN];
 
-    recv(*ClientSocketAuth, publicKeyClient, KEY_LEN, 0);
+
+    iResult = 0;
+    while (bytesRecv < PEM_FILE_LEN) {
+        iResult = recv(*ClientSocketAuth, publicKeyClientBuffer, PEM_FILE_LEN, 0);
+        memcpy(publicKeyClient + bytesRecv, publicKeyClientBuffer, iResult);
+        bytesRecv += iResult;
+    }
 
     // cache key
     FILE *fptr;
-    fptr = fopen("C:\\Users\\Aviv\\clientkey_server.pem","wb");
+    fptr = fopen(CLIENT_KEY_PATH, "wb");
     if(fptr!=NULL){
-        fwrite(publicKeyClient, 1, KEY_LEN, fptr);
+        fwrite(publicKeyClient, 1, PEM_FILE_LEN, fptr);
         fclose(fptr);
-        closesocket(*ListenSocket);
-        closesocket(*ClientSocketAuth);
-        return 0;
     } else {
         perror("file error");
     }
-    int length;
-
+    closesocket(*ListenSocket);
+    closesocket(*ClientSocketAuth);
+    return 0;
 }
 
 int sessionAuth(char * token) {
 
 }
 
-
 // TODO: login
-
-// TODO: encrypt.
 
 // TODO: handle all kinds of http requests
 
 int thread(SOCKET *ClientSocket, SOCKET *HttpSocket, SOCKET *ListenSocket, struct addrinfo hints, struct addrinfo * http_result) {
 
     int iResult = 0;
+    RSA * clientKey = malloc(KEY_LEN);
+    RSA * keyPair = malloc(KEY_LEN);
+    BIO * bio;
+
+    FILE * fptr;
+    int length = 0;
+
+    fptr = fopen(PRIVATE_KEY_PATH,"rb");
+    if (fptr)
+    {
+        fseek (fptr, 0, SEEK_END);
+        length = ftell (fptr);
+        char buffer[length];
+        rewind(fptr);
+        fread (buffer, 1, length, fptr);
+        memcpy(keyPair, (RSA *)buffer, KEY_LEN);
+        fclose (fptr);
+    }
+
+    FILE * fptr2;
+
+    fptr2 = fopen(CLIENT_KEY_PATH,"rb");
+    RSA * pubkey = RSA_new();
+    EVP_PKEY * evp = EVP_PKEY_new();
+    evp = PEM_read_PUBKEY(fptr2, &evp, NULL, NULL);
+    pubkey = EVP_PKEY_get0_RSA(evp);
+
+    if (fptr2)
+    {
+        fseek (fptr2, 0, SEEK_END);
+        length = ftell (fptr2);
+        char buffer[length];
+        rewind(fptr2);
+        fread (buffer, 1, length, fptr2);
+        memcpy(clientKey, buffer, KEY_LEN);
+        fclose (fptr2);
+    } else {
+        printf("No key was found. restart the client to try again");
+        return -1;
+    }
+
 listen:
     // Listen for connections
     printf("Listening... ");
@@ -349,20 +379,30 @@ listen:
     } else {
         printf("Connected. \n");
     }
+
     while (true) {
         bool received = false;
         printf("Waiting... \n");
-        // Converting from big endian to little endian.
-        // Integers are sent as big endians while many processors use little endian,
-        // thus conversion is necessary.
-        u_long netContentLength = 0;
+
         int contentLength;
+        u_char bytes[KEY_LEN];
+        u_char buffer[KEY_LEN];
+        u_char decryptedBytes[4];
+        memset(bytes, 0, KEY_LEN);
         iResult = 0;
-        while (iResult == 0) {
-            iResult = recv(*ClientSocket, &netContentLength, 4, 0);
+        int bytesRecv = 0;
+
+        while (bytesRecv < KEY_LEN) {
+            iResult = recv(*ClientSocket, buffer, KEY_LEN, 0);
+            memcpy(bytes + bytesRecv, buffer, iResult);
+            bytesRecv += iResult;
         }
 
-        contentLength = ntohl(netContentLength);
+
+        RSA_private_decrypt(KEY_LEN,bytes, decryptedBytes, keyPair, RSA_PKCS1_OAEP_PADDING);
+
+        memcpy(&contentLength, decryptedBytes, 4);
+
         char message[contentLength];
         memset(message, 0, strlen(message));
         printf("Content length: %d \n", contentLength);
@@ -373,12 +413,15 @@ listen:
             goto listen;
         }
 
-        int bytes_left = contentLength;
-        int bytesRecv = 0;
+        int bytesLeft = contentLength;
+        bytesRecv = 0;
+        u_char encryptedMessage[KEY_LEN];
+
 
         if (iResult > 0) {
+
             while (!received) {
-                char recvbuf[DEFAULT_BUFLEN];
+                char recvbuf[KEY_LEN];
 
                 // Initializing recvbuf to get rid of garbage mem.
                 memset(recvbuf, 0, DEFAULT_BUFLEN);
@@ -386,28 +429,46 @@ listen:
                 // If the length of the content in the current iteration
                 // is smaller than the buffer size, the current "chunk" is the last.
                 // Add handle connection exceptions
-                if (bytes_left < DEFAULT_BUFLEN) {
-                    iResult = recv(*ClientSocket, recvbuf, contentLength, 0);
-                    memcpy(message + bytesRecv, recvbuf, iResult);
-                    bytesRecv += iResult;
+                if (bytesLeft < DEFAULT_BUFLEN) {
+                    u_char decryptedMessage[bytesLeft];
 
-                    if (strcmp(recvbuf, "exit") == 0) {
-                        printf("Closing connection... \n");
-                        closesocket(*ClientSocket);
-                        goto listen;
+                    int bytesRecvBuf = 0;
+                    while (bytesRecvBuf < KEY_LEN) {
+                        iResult = recv(*ClientSocket, buffer, KEY_LEN, 0);
+                        memcpy(recvbuf + bytesRecvBuf, buffer, iResult);
+                        bytesRecvBuf += iResult;
                     }
+
+                    memcpy(encryptedMessage, recvbuf, KEY_LEN);
+
+                    RSA_private_decrypt(KEY_LEN,encryptedMessage, decryptedMessage, keyPair, RSA_PKCS1_OAEP_PADDING);
+
+                    memcpy(message + bytesRecv, decryptedMessage, bytesLeft);
+                    bytesRecv += iResult;
 
                     received = true;
                 } else {
-                    iResult = recv(*ClientSocket, recvbuf, DEFAULT_BUFLEN, 0);
-                    // Add the current "chunk" to the full message.
-                    memcpy(message + bytesRecv, recvbuf, iResult);
+                    u_char decryptedMessage[DEFAULT_BUFLEN];
 
-                    bytes_left -= DEFAULT_BUFLEN;
-                    printf("ContentLength: %d \n", contentLength);
+                    int bytesRecvBuf = 0;
+                    while (bytesRecvBuf < KEY_LEN) {
+                        iResult = recv(*ClientSocket, buffer, KEY_LEN, 0);
+                        memcpy(recvbuf + bytesRecvBuf, buffer, iResult);
+                        bytesRecvBuf += iResult;
+                    }
+
+                     memcpy(encryptedMessage, recvbuf, KEY_LEN);
+
+                    RSA_private_decrypt(KEY_LEN,encryptedMessage, decryptedMessage, keyPair, RSA_PKCS1_OAEP_PADDING);
+
+                    // Add the current "chunk" to the full message.
+                    memcpy(message + bytesRecv, decryptedMessage, DEFAULT_BUFLEN);
+
+                    bytesLeft -= DEFAULT_BUFLEN;
+                    printf("bytes left: %d \n", bytesLeft);
 
                 }
-                bytesRecv += iResult;
+                bytesRecv += DEFAULT_BUFLEN;
 
             }
             printf("%s", message);
@@ -461,8 +522,8 @@ listen:
                 printf("CONNECT method. \n");
                 char * connect = "HTTP/1.1 200 Connection Established \r\n\r\n";
                 contentLength = strlen(connect);
-                netContentLength = htonl(contentLength);
-                send(*ClientSocket, &netContentLength, 4, 0);
+                memcpy(bytes, &contentLength, 4);
+                send(*ClientSocket, bytes, 4, 0);
                 send(*ClientSocket, connect, strlen(connect), 0);
                 closesocket(*ClientSocket);
                 goto listen;
@@ -500,7 +561,19 @@ listen:
             while (!strstr(buffer, "\r\n\r\n")) {
                 memset(buffer, 0, DEFAULT_BUFLEN);
 
-                iResult = recv(*HttpSocket, buffer, DEFAULT_BUFLEN, 0);
+                // Peek before receiving, to see the end of the headers.
+                iResult = recv(*HttpSocket, buffer, DEFAULT_BUFLEN, MSG_PEEK);
+                if (strstr(buffer, "\r\n\r\n")) {
+                    // check the length until the CRLFCRLF sequence
+                    char * bufferPointer = buffer;
+                    char * end = strstr(buffer, "\r\n\r\n");
+                    int lastChunkLen = end - bufferPointer + 4;
+                    memset(buffer, 0, DEFAULT_BUFLEN);
+                    iResult = recv(*HttpSocket, buffer, lastChunkLen, 0);
+                } else {
+                    iResult = recv(*HttpSocket, buffer, DEFAULT_BUFLEN, 0);
+                }
+
                 response = (char *) realloc(response, bytesRecv + iResult);
                 memset(response + bytesRecv, 0, iResult);
 
@@ -518,7 +591,10 @@ listen:
 
             // get header length:
             char * terminators = strstr(response, "\r\n\r\n");
-            int headers_len = (int)(terminators - response);
+
+            int headers_len = bytesRecv - 4;
+
+            int lastBytesReceived = bytesRecv - headers_len - 4;
 
             char respcpy[bytesRecv];
             memcpy(respcpy, response, bytesRecv);
@@ -531,34 +607,77 @@ listen:
             if (res == 0) {
                 len = getContentLength(respcpy);
                 total = headers_len + len + 4;
-                bytes_left = total - bytesRecv;
+                bytesLeft = total - bytesRecv;
 
-                // TODO: change to default buflen
                 while (total > bytesRecv) {
                     memset(buffer, 0, DEFAULT_BUFLEN);
 
-
-                    if (bytes_left < DEFAULT_BUFLEN) {
-                        iResult = recv(*HttpSocket, buffer, bytes_left, 0);
+                    if (bytesLeft < DEFAULT_BUFLEN) {
+                        iResult = recv(*HttpSocket, buffer, bytesLeft, 0);
                         response = (char *) realloc(response, bytesRecv + iResult);
-                        memset(response + bytesRecv, 0, bytes_left);
-                        memcpy(response + bytesRecv, buffer, bytes_left);
-                        printf("Bytes received from Webserver: %d \n", iResult);
+                        memset(response + bytesRecv, 0, bytesLeft);
+                        memcpy(response + bytesRecv, buffer, bytesLeft);
                     } else {
                         iResult = recv(*HttpSocket, buffer, DEFAULT_BUFLEN, 0);
                         response = (char *) realloc(response, bytesRecv + iResult);
                         memset(response + bytesRecv, 0, iResult);
                         memcpy(response + bytesRecv, buffer, iResult);
-                        printf("Bytes received from Webserver: %d \n", iResult);
                     }
 
                     if (iResult == 0) {
                         goto listen;
                     }
-                    printf("Msg: %s \n", buffer);
                     bytesRecv += iResult;
-                    bytes_left = total - bytesRecv;
+                    bytesLeft = total - bytesRecv;
                 }
+            } else if (res == 1) {
+                // read the first chunk len: read one byte each time.
+                // until the length is 0.
+                int chunkLen = -1;
+                while (chunkLen != 0) {
+                    char * lenChar = malloc(1);
+                    char lenBuff[1];
+                    int bytesRecvLen = 0; //reset number of bytes received.
+                    //get chunk length
+                    while (!strstr(lenChar, "\r\n")) {
+                        iResult = 0;
+                        while (iResult == 0) { //until a byte is received.
+                            iResult = recv(*HttpSocket, lenBuff, 1, 0);
+                        }
+
+                        //copy to response and to lenChar
+                        response = (char *) realloc(response, bytesRecv + iResult);
+                        memset(response + bytesRecv, 0, iResult);
+                        memcpy(response + bytesRecv, lenBuff, iResult);
+                        lenChar = (char *) realloc(lenChar, bytesRecvLen + iResult);
+                        memset(lenChar + bytesRecvLen, 0, iResult);
+                        memcpy(lenChar + bytesRecvLen, lenBuff, iResult);
+
+                        // increment values
+                        bytesRecv += 1;
+                        bytesRecvLen += 1;
+                    }
+                    char * endNum = strstr(lenChar, "\r\n");
+                    chunkLen = strtol(lenChar, &endNum - 1, 16);
+                    // get chunk:
+                    char chunkBuf[chunkLen + 2];
+                    char chunk[chunkLen + 2];
+                    int bytesRecvChunk = 0;
+                    while (bytesRecvChunk < chunkLen) {
+                        iResult = recv(*HttpSocket, chunkBuf, chunkLen + 2, 0);
+
+                        response = (char *) realloc(response, bytesRecv + iResult);
+                        memset(response + bytesRecv, 0, iResult);
+                        memcpy(response + bytesRecv, chunkBuf, iResult);
+
+                        memset(chunk + bytesRecvChunk, 0, iResult);
+                        memcpy(chunk + bytesRecvChunk,  chunkBuf, iResult);
+                        bytesRecvChunk += iResult;
+                        bytesRecv += iResult;
+                    }
+                }
+
+                total = bytesRecv;
             } else { // no body
                 total = headers_len + 4;
             }
@@ -568,32 +687,31 @@ listen:
             // total message length
 
             printf("Total: %d \n", total);
+            char responseOnly[total];
+            memcpy(responseOnly, response, total);
 
-            printf("Full message: %s \n", response);
-            FILE *fptr;
-            fptr = fopen("C:\\Users\\Aviv\\program.gz","wb");
-            fwrite(respcpy, 1, total, fptr);
-            fclose(fptr);
+            printf("Full message: %s \n", responseOnly);
 
 
-            // Echo back the message in 512 byte chunks.
+            // Echo back the message in 215 byte chunks.
             received = false;
             int startIndex = 0;
             int endIndex = DEFAULT_BUFLEN;
+            u_char bytesInt[4];
+            u_char encryptedBytes[RSA_size(pubkey)];
 
             contentLength = total;
-            int originalContentLength = contentLength;
 
-            netContentLength = htonl(contentLength);
-            send(*ClientSocket, &netContentLength, 4, 0);
+            memcpy(bytesInt, &contentLength, 4);
+            RSA_public_encrypt(4, bytesInt, encryptedBytes, pubkey, RSA_PKCS1_OAEP_PADDING);
 
-            bytes_left = contentLength;
+            send(*ClientSocket, encryptedBytes, KEY_LEN, 0);
 
-            //it's send actually.
-            // TODO: account for null pointers. (sorry saji you were right)
+            bytesLeft = contentLength;
+
             while (1) {
-                if (bytes_left < DEFAULT_BUFLEN) {
-                    endIndex = originalContentLength;
+                if (bytesLeft < DEFAULT_BUFLEN) {
+                    endIndex = contentLength;
                 }
                 char curMessage[endIndex - startIndex];
                 memset(curMessage, 0, DEFAULT_BUFLEN);
@@ -604,24 +722,36 @@ listen:
 
 
                 // Echo the buffer back to the sender
-                // When there's still more than 512 bytes left,
+                // When there's still more than 214 bytes left,
                 // subtract the maximum buflen to account for the number of bytes left and send to client.
-                if (bytes_left > DEFAULT_BUFLEN) {
-                    iResult = send(*ClientSocket, curMessage, DEFAULT_BUFLEN, 0);
+                if (bytesLeft > DEFAULT_BUFLEN) {
+                    u_char messageBytes[DEFAULT_BUFLEN];
+                    memset(encryptedMessage, 0, RSA_size(pubkey));
+                    memcpy(messageBytes, curMessage, DEFAULT_BUFLEN);
+
+                    RSA_public_encrypt(DEFAULT_BUFLEN, messageBytes, encryptedMessage, pubkey, RSA_PKCS1_OAEP_PADDING);
+
+                    iResult = send(*ClientSocket, encryptedMessage, KEY_LEN, 0);
                     startIndex = endIndex;
                     endIndex = endIndex + DEFAULT_BUFLEN;
-                    bytes_left -= DEFAULT_BUFLEN;
                 }
                     // Getting to a number smaller or equal to the maximum buflen,
                     // means we have reached the end of the message.
-                else if (bytes_left <= DEFAULT_BUFLEN) {
-                    iResult = send(*ClientSocket, curMessage, bytes_left, 0);
-                    bytes_left -= iResult;
+                else if (bytesLeft <= DEFAULT_BUFLEN) {
+                    u_char messageBytes[bytesLeft];
+                    memcpy(messageBytes, curMessage, bytesLeft);
+
+                    RSA_public_encrypt(bytesLeft, messageBytes, encryptedMessage, pubkey, RSA_PKCS1_OAEP_PADDING);
+
+                    iResult = send(*ClientSocket, encryptedMessage, KEY_LEN, 0);
+                    bytesLeft -= iResult;
                     closesocket(*HttpSocket);
                     closesocket(*ClientSocket);
                     memset(response, 0, contentLength);
                     goto listen;
                 }
+
+                bytesLeft -= DEFAULT_BUFLEN;
 
                 if (iResult == SOCKET_ERROR) {
                     printf("send failed: %d\n", WSAGetLastError());
@@ -636,6 +766,8 @@ listen:
         }
     }
 }
+
+//TODO: handle exceptions when the client unexpectedly disconnects.
 
 int main() {
 
