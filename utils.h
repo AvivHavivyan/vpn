@@ -4,6 +4,6 @@
 
 #ifndef VPN_UTILS_H
 #define VPN_UTILS_H
-char * lowerstring(char * str);
+char * lowerString(char * str);
 
 #endif //VPN_UTILS_H
