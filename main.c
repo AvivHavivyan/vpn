@@ -28,7 +28,6 @@
 
 
 
-//TODO: add comments
 // Weird config stuff, only add if the compiler does not recognize the functions.
 
 void WSAAPI freeaddrinfo( struct addrinfo* );
@@ -93,13 +92,12 @@ char * getPort(char * address) {
     return port;
 }
 
-
+//check for transfer-encoding: chunked header in a response/response headers
 int getLengthType(char * response, int len) {
-    //check for transfer-encoding: chunked.
     char lower[len];
     memset(lower, 0, len);
     memcpy(lower, response, len);
-    lowerString(lower);
+    lowerString(lower); // lowercase the string for ease of use.
     if (strstr(lower, "transfer-encoding: chunked")) {
         return 1;
     }
@@ -130,10 +128,10 @@ int getContentLength(char * response) {
     delim = ":";
     strtok(header_line, delim); // get the number as a string
 
-    char * len_str = strtok(NULL, delim);
-    printf("lenstr: %s", len_str);
-
-    return atoi(len_str); // convert to int
+    char * strLen = strtok(NULL, delim);
+    printf("lenstr: %s", strLen);
+    // convert to int
+    return strtol(strLen, NULL, 10);
 }
 
 int setUpListenSocket(struct addrinfo hints, struct addrinfo * result, SOCKET *ListenSocket) {
@@ -169,13 +167,15 @@ int setUpListenSocket(struct addrinfo hints, struct addrinfo * result, SOCKET *L
     return 0;
 }
 
-
+// Retrieve keys according to 2 flags:
+// 0 - server public RSA key
+// 1 - server private RSA key
 char * retrieveKey(int flag) {
 
     FILE * fptr;
     int length;
 
-    if (flag == 0) { // public key
+    if (flag == 0) { // get public key from file
         fptr = fopen(PUBLIC_KEY_PATH,"rb");
         if (fptr)
         {
@@ -184,20 +184,13 @@ char * retrieveKey(int flag) {
             char buffer[length];
             char * publicKey = malloc(PEM_FILE_LEN);
             rewind(fptr);
-            if (buffer)
-            {
-                fread (buffer, 1, length, fptr);
-                memcpy(publicKey, buffer, PEM_FILE_LEN);
-            }
+            fread (buffer, 1, length, fptr);
+            memcpy(publicKey, buffer, PEM_FILE_LEN);
             fclose (fptr);
             return publicKey;
         }
     } else if (flag == 1) {
-        // private key
-        RSA * keyPair;
-
-        length = 0;
-
+        // get private key from file
         fptr = fopen(PRIVATE_KEY_PATH,"rb");
         RSA * privateKey = RSA_new();
         privateKey = PEM_read_RSAPrivateKey(fptr, &privateKey, NULL, NULL);
@@ -220,17 +213,18 @@ int genKey() {
     FILE *fptr;
     fptr = fopen(PRIVATE_KEY_PATH, "rb");
 
-    RSA * keyPair = RSA_new();
+    RSA * keyPair;
     keyPair = malloc(KEY_LEN);
     if (retrieveKey(1) != NULL) {
         memcpy(keyPair,  retrieveKey(1), KEY_LEN);
 
-        if (RSA_check_key(keyPair)) { // if there's already a key
+        if (RSA_check_key(keyPair)) { // if there's already a key exit
             fclose(fptr);
             return 0;
         }
     }
 
+    // if no key is found, generate one
 
     fclose(fptr);
     RSA * key;
@@ -274,12 +268,10 @@ int genKey() {
     return 0;
 }
 
-RSA * keysExchange(SOCKET *ClientSocketAuth, char * sessionID) {
-    int iResult = 0;
-    int bytesRecv = 0;
+// exchange keys with client and then send session ID to client
+RSA * keysExchange(const SOCKET *ClientSocketAuth, char * sessionID) {
 
     FILE *fptr;
-    long length;
 
     // send key
     char * publicKey = retrieveKey(0);
@@ -293,7 +285,6 @@ RSA * keysExchange(SOCKET *ClientSocketAuth, char * sessionID) {
 
 
     // cache key
-
     char * filename = malloc(SESSION_ID_LEN + 6);
     char * extension = ".time\0";
 
@@ -304,7 +295,11 @@ RSA * keysExchange(SOCKET *ClientSocketAuth, char * sessionID) {
 
     time_t currentTime = time(NULL);
     fptr = fopen(filename, "wb");
-    fwrite(time, 1, sizeof(time), fptr);
+    char time[256];
+    memset(time, 0, 256);
+    sprintf(time, "%lld", currentTime);
+
+    fwrite(time, 1, 256, fptr);
     fclose(fptr);
 
     // cache the ID
@@ -327,28 +322,31 @@ RSA * keysExchange(SOCKET *ClientSocketAuth, char * sessionID) {
 
     fptr2 = fopen(filenameTxt,"rb");
 
-    RSA * clientKey = RSA_new();
+    // cache client public key
+    RSA * clientKey;
     EVP_PKEY * evp = EVP_PKEY_new();
     evp = PEM_read_PUBKEY(fptr2, &evp, NULL, NULL);
     clientKey = EVP_PKEY_get0_RSA(evp);
     fclose(fptr2);
 
+    // send session ID
     u_char * encryptedSessionID = malloc(KEY_LEN);
     u_char * sessionIDUnsigned = malloc(SESSION_ID_LEN);
     memcpy(sessionIDUnsigned, sessionID, SESSION_ID_LEN);
     RSA_public_encrypt(SESSION_ID_LEN, sessionIDUnsigned, encryptedSessionID, clientKey, RSA_PKCS1_OAEP_PADDING);
 
-    send(*ClientSocketAuth, encryptedSessionID, KEY_LEN, 0);
+    send(*ClientSocketAuth, (char *)encryptedSessionID, KEY_LEN, 0);
 
     return clientKey;
 }
 
-
+// generate a cryptographically random, safe session ID
 char * generateSessionID() {
     int i;
-    unsigned char sessionIDbytes[32];
-    char * sessionIDstr = malloc(32 * 2 + 1);
+    unsigned char sessionIDbytes[32]; // length - 32 bytes
+    char * sessionIDstr = malloc(32 * 2 + 1); // the HEX string
     RAND_bytes(sessionIDbytes, 32);
+    // convert to HEX format
     for (i = 0; i < 32; i++)
         sprintf(sessionIDstr + 2*i, "%02X", sessionIDbytes[i]);
     char * sessionID = malloc(SESSION_ID_LEN);
@@ -356,14 +354,16 @@ char * generateSessionID() {
     return sessionID;
 }
 
+// retrieves a client's public RSA key that corresponds to their ID
 RSA * retrieveClientKey(char * sessionID) {
+    // open the key file with the corresponding session ID name
     FILE * fptr;
     char * filename = malloc(SESSION_ID_LEN + 5);
     char * extension = ".txt";
     memcpy(filename, sessionID, SESSION_ID_LEN);
     memcpy(filename + SESSION_ID_LEN, extension, 5);
     fptr = fopen(filename,"rb");
-    RSA * clientKey = RSA_new();
+    RSA * clientKey;
     EVP_PKEY * evp = EVP_PKEY_new();
     evp = PEM_read_PUBKEY(fptr, &evp, NULL, NULL);
     clientKey = EVP_PKEY_get0_RSA(evp);
@@ -373,61 +373,73 @@ RSA * retrieveClientKey(char * sessionID) {
 
 
 // TODO: check time
+// checks and validates a session ID - session IDs expire after an hour.
+// if valid, return 0. else, return 1
 int validateID(char * sessionID) {
     FILE * fptr;
     char * filename = malloc(SESSION_ID_LEN + 6);
     char * extension = ".time";
-    int length = 0;
-    time_t timestampSeconds = 0;
+    int length;
+    time_t timestampSeconds;
     memcpy(filename, sessionID, SESSION_ID_LEN);
     memcpy(filename + SESSION_ID_LEN, extension, 6);
     fptr = fopen(filename,"rb");
 
+    // open the corresponding session time file
     if (fptr) {
         fseek(fptr, 0, SEEK_END);
         length = ftell(fptr);
         char buffer[length];
         rewind(fptr);
-        if (buffer) {
-            fread(buffer, 1, length, fptr);
-            timestampSeconds = (long long)buffer;
-        }
+        fread(buffer, 1, length, fptr);
+        timestampSeconds = strtoll(buffer, NULL, 10);
         fclose(fptr);
+        time_t currentTime = time(NULL);
+        if (timestampSeconds == 0) { // if no timestamp found return 1
+            return 1;
+        }
+        if (currentTime > timestampSeconds + 3600) {
+            // if an hour has passed since the generation of the session ID - it expired, returns 1.
+            return 1;
+        } else { // if passed all the checks return 0
+            return 0;
+        }
     }
 
-    time_t currentTime = time(NULL);
-    if (timestampSeconds == 0) {
-        return 1;
-    }
-    if (currentTime > timestampSeconds + 3600) {
-        return 1;
-    } else {
-        return 0;
-    }
-    return 0;
+    return 1;
+
 }
 
 
-//retrieves the user's public key
+//authenticates a user requesting to connect - checks for session ID, validates it,
+// then exchanges keys if necessary, sends a new session ID and returns it.
 char * auth(SOCKET * ClientSocketAuth) {
     printf("authenticating... \n");
     genKey();
-    int iResult = 0;
+    int iResult;
 
     char sessionBuff[SESSION_ID_LEN];
 
     iResult = recv(*ClientSocketAuth, sessionBuff, SESSION_ID_LEN, MSG_WAITALL);
 
+    if (iResult <= 0) {
+        return NULL;
+    }
+
+    // if null array, the client needs a new session ID and keys.
     if (sessionBuff[0] == 0) {
         char * sessionID = generateSessionID();
-        int strln = 13;
         u_long netContentLength = 0;
         netContentLength = htonl(13);
-        send(*ClientSocketAuth, &netContentLength, 4, 0);
+        // send length
+        send(*ClientSocketAuth, (char *)&netContentLength, 4, 0);
 
+        // send exchange message
         send(*ClientSocketAuth, "key-exchange", 13, 0);
+
+        // exchange keys and return the new session ID
         printf("invalid session ID. exchanging keys... \n");
-        RSA * clientKey = keysExchange(ClientSocketAuth, sessionID);
+        keysExchange(ClientSocketAuth, sessionID);
         return sessionID;
     } else { // already have a sessionID, validate, retrieve public key and return it
         printf("validating session ID... \n");
@@ -435,31 +447,31 @@ char * auth(SOCKET * ClientSocketAuth) {
         int valid = validateID(sessionBuff);
         printf("finished \n");
 
-        if (valid == 0) {
+        if (valid == 0) { // if the exit code is 0, the ID is valid.
             printf("valid session ID \n");
             u_long netContentLength = 0;
             netContentLength = htonl(3);
-            send(*ClientSocketAuth, &netContentLength, 4, 0);
+
+            // return an ok message to the client - first the length
+            send(*ClientSocketAuth, (char *)&netContentLength, 4, 0);
             char * response = "ok";
 
+            // send the "ok" string
             send(*ClientSocketAuth, response, 3, 0);
             char * sessionID = malloc(SESSION_ID_LEN);
-            memcpy(sessionID, sessionBuff, SESSION_ID_LEN);
-//            printf("session buff: %s", sessionBuff);
-
-//            printf("session ID: %s", sessionID);
+            memcpy(sessionID, sessionBuff, SESSION_ID_LEN); // copy and return the session ID
             return sessionID;
-        } else {
+        } else { // if invalid session ID, generate a new one and indicate that key exchange is necessary.
             char * sessionID = generateSessionID();
-            int strln = 13;
             u_long netContentLength = 0;
             netContentLength = htonl(13);
-            send(*ClientSocketAuth, &netContentLength, 4, 0);
+
+            // send key exchange message
+            send(*ClientSocketAuth, (char *)&netContentLength, 4, 0);
 
             send(*ClientSocketAuth, "key-exchange\0", 13, 0);
             printf("invalid session ID. exchanging keys... \n");
-            RSA * clientKey = keysExchange(ClientSocketAuth, sessionID);
-            printf("the end of auth \n");
+            keysExchange(ClientSocketAuth, sessionID);
 
             return sessionID;
         }
@@ -470,14 +482,13 @@ char * auth(SOCKET * ClientSocketAuth) {
 
 
 // TODO: handle all kinds of http requests
-
+// main server function, handles the flow of the client program. calls various functions.
+// executes authentication, interaction with client, accepts and decrypts requests, forwards
+// requests to webserver and sends the webserver response encrypted to the client.
 int server() {
 
-    int iResult = 0;
+    int iResult;
 
-    if (1 < 0) {
-
-    }
     // Listen for connections
     SOCKET ListenSocketAuth = INVALID_SOCKET;
     struct addrinfo *result = NULL, hints, *http_result = NULL;
@@ -491,8 +502,9 @@ int server() {
     setUpListenSocket( hints, result, &ListenSocketAuth);
     SOCKET ClientSocket = INVALID_SOCKET;
 
-    listen:
 
+    // after each request is handled start the process again from this label
+    listen:
 
     printf("Listening... ");
     if (listen(ListenSocketAuth, SOMAXCONN) == SOCKET_ERROR) {
@@ -514,30 +526,32 @@ int server() {
 
     printf("before auth \n");
 
+    // initiate authentication
     char * sessionID = auth(&ClientSocket);
+    if (sessionID == NULL) {
+        goto listen;
+    }
     printf("after auth \n");
 
+    // get server's private key and client's public key in order to decrypt/encrypt messages
     RSA * pubkey = retrieveClientKey(sessionID);
     RSA * keyPair = (RSA *)retrieveKey(1);
 
     while (true) {
         bool received = false;
-//        printf("Waiting... \n");
+        printf("Waiting... \n");
 
+        // RECEIVING REQUEST FROM CLEINT //
         int contentLength;
         u_char bytes[KEY_LEN];
         u_char buffer[KEY_LEN];
         u_char * decryptedBytes = malloc(4);
         memset(bytes, 0, KEY_LEN);
-        iResult = 0;
-        int bytesRecv = 0;
-
-        u_long netcheckLen;
-        int checkLen;
-        char check[4];
+        int bytesRecv;
 
 
-        iResult = recv(ClientSocket, buffer, KEY_LEN, MSG_WAITALL);
+        // get encrypted content length and decrypt
+        iResult = recv(ClientSocket, (char *)buffer, KEY_LEN, MSG_WAITALL);
 
         RSA_private_decrypt(KEY_LEN,buffer, decryptedBytes, keyPair, RSA_PKCS1_OAEP_PADDING);
 
@@ -557,6 +571,7 @@ int server() {
         bytesRecv = 0;
         u_char encryptedMessage[KEY_LEN];
 
+        // get the message contents
         if (iResult > 0) {
 
             while (!received) {
@@ -573,7 +588,7 @@ int server() {
 
                     int bytesRecvBuf = 0;
                     while (bytesRecvBuf < KEY_LEN) {
-                        iResult = recv(ClientSocket, buffer, KEY_LEN, 0);
+                        iResult = recv(ClientSocket, (char *)buffer, KEY_LEN, 0);
                         memcpy(recvbuf + bytesRecvBuf, buffer, iResult);
                         bytesRecvBuf += iResult;
                     }
@@ -586,12 +601,12 @@ int server() {
                     bytesRecv += iResult;
 
                     received = true;
-                } else {
+                } else { // receive chunk from client, decrypt and append to message
                     u_char decryptedMessage[DEFAULT_BUFLEN];
 
                     int bytesRecvBuf = 0;
                     while (bytesRecvBuf < KEY_LEN) {
-                        iResult = recv(ClientSocket, buffer, KEY_LEN, 0);
+                        iResult = recv(ClientSocket, (char *)buffer, KEY_LEN, 0);
                         memcpy(recvbuf + bytesRecvBuf, buffer, iResult);
                         bytesRecvBuf += iResult;
                     }
@@ -610,11 +625,14 @@ int server() {
                 bytesRecv += DEFAULT_BUFLEN;
 
             }
+
+            // logging
             printf("%s", message);
 
 
+            // get all different address "formats"
             char messagecpy[bytesRecv];
-            memcpy(messagecpy, message, strlen(message));
+            memcpy(messagecpy, message, bytesRecv);
             char * hostaddress = getURL(messagecpy);
             char hostaddresscopy[strlen(hostaddress)];
             char hostaddresscpy[strlen(hostaddress)];
@@ -625,30 +643,36 @@ int server() {
             char * port = getPort(hostaddress);
             hints.ai_flags = 0;
 
+            // if the port is the HTTP port
             if (strcmp(port, "443") != 0) {
                 port = "80";
                 char * http_host_address = getHttpHostAddress(hostaddresscopy);
                 printf("http host address: %s \n", http_host_address);
                 iResult = getaddrinfo(http_host_address, port, &hints, &http_result);
+                // if the getaddrinfo exited with a nonzero value, try the different address format
                 if (iResult != 0) {
                     iResult = getaddrinfo(hostaddress, port, &hints, &http_result);
                     printf("http host address: %s \n", hostaddress);
 
                 }
-            } else {
+            } else { // else get hostname address info
                 iResult = getaddrinfo(hostname, port, &hints, &http_result);
             }
 
             if (iResult != 0) {
-                printf("Failed to retrieve address data. \n");
-                break;
+                printf("Failed to retrieve address data. \n"); // TODO: notify client.
+                goto listen;
             }
+
+            // set values to connect to remote webserver and create a socket
             SOCKET HttpSocket = INVALID_SOCKET;
             HttpSocket = socket(http_result->ai_family, http_result->ai_socktype, http_result->ai_protocol);
             struct sockaddr_in  *sockaddr_ipv4;
             sockaddr_ipv4 = (struct sockaddr_in *) http_result->ai_addr;
             printf("\tIPv4 address %s\n", inet_ntoa(sockaddr_ipv4->sin_addr));
-            iResult = connect(HttpSocket, http_result->ai_addr, http_result->ai_addrlen);
+
+            // connect to remote webserver
+            iResult = connect(HttpSocket, http_result->ai_addr, (int)http_result->ai_addrlen);
 
             if (iResult != 0) {
                 printf("Failed to connect to remote server. \n");
@@ -658,16 +682,16 @@ int server() {
                 printf("Connected to remote server successfully on port %s. \n", port);
             }
 
-            if (checkMethodType(message) == 1) {
-                printf("CONNECT method. \n");
-                char * connect = "HTTP/1.1 200 Connection Established \r\n\r\n";
-                contentLength = strlen(connect);
-                memcpy(bytes, &contentLength, 4);
-                send(ClientSocket, bytes, 4, 0);
-                send(ClientSocket, connect, strlen(connect), 0);
-                closesocket(ClientSocket);
-                goto listen;
-            }
+//            if (checkMethodType(message) == 1) {
+//                printf("CONNECT method. \n");
+//                char * connect = "HTTP/1.1 200 Connection Established \r\n\r\n";
+//                contentLength = strlen(connect);
+//                memcpy(bytes, &contentLength, 4);
+//                send(ClientSocket, bytes, 4, 0);
+//                send(ClientSocket, connect, strlen(connect), 0);
+//                closesocket(ClientSocket);
+//                goto listen;
+//            }
 
             iResult = send(HttpSocket,  message, contentLength + 1, 0);
             if (iResult == SOCKET_ERROR) {
@@ -679,89 +703,88 @@ int server() {
 
             // RECEIVING RESPONSES FROM REMOTE WEBSERVER
 
-            //allocate base size/length
-
+            //allocate response base size/length
             char *response = (char *) malloc(DEFAULT_BUFLEN);
 
-            int cnt = 0;
+            char httpBuffer[DEFAULT_BUFLEN];
 
-            char buffer[DEFAULT_BUFLEN];
-            memset(buffer, 0, DEFAULT_BUFLEN);
-
-            memset(buffer, 0, DEFAULT_BUFLEN);
+            // reset arrays
+            memset(httpBuffer, 0, DEFAULT_BUFLEN);
             memset(response, 0, DEFAULT_BUFLEN);
 
-            iResult = DEFAULT_BUFLEN;
 
             // wait for the end of http headers
 
             // TODO: add time out (maybe retry after 5 seconds?)
             bytesRecv = 0;
 
-            while (!strstr(buffer, "\r\n\r\n")) {
-                memset(buffer, 0, DEFAULT_BUFLEN);
+            while (!strstr(httpBuffer, "\r\n\r\n")) {
+                memset(httpBuffer, 0, DEFAULT_BUFLEN);
 
                 // Peek before receiving, to see the end of the headers.
-                iResult = recv(HttpSocket, buffer, DEFAULT_BUFLEN, MSG_PEEK);
-                if (strstr(buffer, "\r\n\r\n")) {
-                    // check the length until the CRLFCRLF sequence
-                    char * bufferPointer = buffer;
-                    char * end = strstr(buffer, "\r\n\r\n");
-                    int lastChunkLen = end - bufferPointer + 4;
-                    memset(buffer, 0, DEFAULT_BUFLEN);
-                    iResult = recv(HttpSocket, buffer, lastChunkLen, 0);
+                iResult = recv(HttpSocket, httpBuffer, DEFAULT_BUFLEN, MSG_PEEK);
+                if (iResult == SOCKET_ERROR) // if a socket error occurs
+                    goto listen;
+
+                // get response headers
+                if (strstr(httpBuffer, "\r\n\r\n")) { // if we have reached the
+                    // CRLFCRLF sequence then we are at the end of the headers part.
+                    // check the length until the CRLFCRLF sequence and receive that
+                    // number of bytes from the webserver.
+                    char * bufferPointer = httpBuffer;
+                    char * end = strstr(httpBuffer, "\r\n\r\n");
+                    int lastChunkLen = (int)(end - bufferPointer) + 4;
+                    memset(httpBuffer, 0, DEFAULT_BUFLEN);
+                    iResult = recv(HttpSocket, httpBuffer, lastChunkLen, 0);
                 } else {
-                    iResult = recv(HttpSocket, buffer, DEFAULT_BUFLEN, 0);
+                    iResult = recv(HttpSocket, httpBuffer, DEFAULT_BUFLEN, 0);
                 }
 
                 response = (char *) realloc(response, bytesRecv + iResult);
                 memset(response + bytesRecv, 0, iResult);
 
-                //TODO: fix bytesrecv
-                memcpy(response + bytesRecv, buffer, iResult);
+                memcpy(response + bytesRecv, httpBuffer, iResult);
                 printf("Bytes received from Webserver: %d \n", iResult);
                 if (iResult == 0) {
                     goto listen;
                 }
-                printf("Msg: %s \n", buffer);
+                printf("Msg: %s \n", httpBuffer);
                 bytesRecv += iResult;
                 if (iResult == SOCKET_ERROR)
                     return -1;
             }
 
-            // get header length:
-            char * terminators = strstr(response, "\r\n\r\n");
+            // get headers part length:
+            int headersLen = bytesRecv - 4;
 
-            int headers_len = bytesRecv - 4;
-
-            int lastBytesReceived = bytesRecv - headers_len - 4;
-
-            char respcpy[bytesRecv];
-            memcpy(respcpy, response, bytesRecv);
+            char respCpy[bytesRecv];
+            memcpy(respCpy, response, bytesRecv);
             int res = getLengthType(response, bytesRecv);
             printf("res: %d", res);
-            int len = 0;
+            int len;
             int total;
 
-            // If the content-length header is there
+            // If the content-length headersLen is there receive the entire body of the response
             if (res == 0) {
-                len = getContentLength(respcpy);
-                total = headers_len + len + 4;
+                // get the content length
+                len = getContentLength(respCpy);
+                total = headersLen + len + 4; // total length of the response
                 bytesLeft = total - bytesRecv;
 
+                // receive the body, make sure that all the bytes are there.
                 while (total > bytesRecv) {
-                    memset(buffer, 0, DEFAULT_BUFLEN);
+                    memset(httpBuffer, 0, DEFAULT_BUFLEN);
 
                     if (bytesLeft < DEFAULT_BUFLEN) {
-                        iResult = recv(HttpSocket, buffer, bytesLeft, 0);
+                        iResult = recv(HttpSocket, httpBuffer, bytesLeft, 0);
                         response = (char *) realloc(response, bytesRecv + iResult);
                         memset(response + bytesRecv, 0, bytesLeft);
-                        memcpy(response + bytesRecv, buffer, bytesLeft);
+                        memcpy(response + bytesRecv, httpBuffer, bytesLeft);
                     } else {
-                        iResult = recv(HttpSocket, buffer, DEFAULT_BUFLEN, 0);
+                        iResult = recv(HttpSocket, httpBuffer, DEFAULT_BUFLEN, 0);
                         response = (char *) realloc(response, bytesRecv + iResult);
                         memset(response + bytesRecv, 0, iResult);
-                        memcpy(response + bytesRecv, buffer, iResult);
+                        memcpy(response + bytesRecv, httpBuffer, iResult);
                     }
 
                     if (iResult == 0) {
@@ -770,7 +793,7 @@ int server() {
                     bytesRecv += iResult;
                     bytesLeft = total - bytesRecv;
                 }
-            } else if (res == 1) {
+            } else if (res == 1) { // if the transfer-encoding: chunked headersLen is there
                 // read the first chunk len: read one byte each time.
                 // until the length is 0.
                 int chunkLen = -1;
@@ -797,43 +820,37 @@ int server() {
                         bytesRecv += 1;
                         bytesRecvLen += 1;
                     }
+
                     char * endNum = strstr(lenChar, "\r\n");
                     chunkLen = strtol(lenChar, &endNum - 1, 16);
                     // get chunk:
+                    // adding two bytes to account for a CRLF sequence at the end of
+                    // each chunk's length, and also at the end of each chunk
                     char chunkBuf[chunkLen + 2];
-                    char chunk[chunkLen + 2];
-                    int bytesRecvChunk = 0;
-                    while (bytesRecvChunk < chunkLen) {
-                        iResult = recv(HttpSocket, chunkBuf, chunkLen + 2, 0);
 
-                        response = (char *) realloc(response, bytesRecv + iResult);
-                        memset(response + bytesRecv, 0, iResult);
-                        memcpy(response + bytesRecv, chunkBuf, iResult);
-
-                        memset(chunk + bytesRecvChunk, 0, iResult);
-                        memcpy(chunk + bytesRecvChunk,  chunkBuf, iResult);
-                        bytesRecvChunk += iResult;
-                        bytesRecv += iResult;
-                    }
+                    iResult = recv(HttpSocket, chunkBuf, chunkLen + 2, MSG_WAITALL);
+                    response = (char *) realloc(response, bytesRecv + iResult);
+                    memset(response + bytesRecv, 0, iResult);
+                    memcpy(response + bytesRecv, chunkBuf, iResult);
+                    bytesRecv += iResult;
                 }
 
-                total = bytesRecv;
-            } else { // no body
-                total = headers_len + 4;
+                total = bytesRecv; // the total length of the request is the number of bytes received.
+            } else { // if there's no body to the response add the length of the CRLFCRLF sequence.
+                total = headersLen + 4;
             }
 
-            //TODO: handle chunked
 
             // total message length
 
-            printf("Total: %d \n", total);
-            char responseOnly[total];
+            printf("Total: %d \n", total); // logging
+
+            char responseOnly[total]; // copy only the relevant bytes - the actual response.
             memcpy(responseOnly, response, total);
 
-            printf("Full message: %s \n", responseOnly);
+            printf("Full message: %s \n", responseOnly); // logging
 
-
-            // Echo back the message in 215 byte chunks.
+            // send back the message to the client in 214 byte chunks.
             received = false;
             int startIndex = 0;
             int endIndex = DEFAULT_BUFLEN;
@@ -842,14 +859,18 @@ int server() {
 
             contentLength = total;
 
+            // send the length of the response, encrypted, to the client first
             memcpy(bytesInt, &contentLength, 4);
             RSA_public_encrypt(4, bytesInt, encryptedBytes, pubkey, RSA_PKCS1_OAEP_PADDING);
 
-            send(ClientSocket, encryptedBytes, KEY_LEN, 0);
+            send(ClientSocket, (char *)encryptedBytes, KEY_LEN, 0);
 
+            // to keep track of how many bytes are left to send
             bytesLeft = contentLength;
 
             while (1) {
+
+                // if the final batch is reached, endIndex would be the content length.
                 if (bytesLeft < DEFAULT_BUFLEN) {
                     endIndex = contentLength;
                 }
@@ -860,10 +881,10 @@ int server() {
                 memcpy(curMessage, &response[startIndex], endIndex - startIndex);
                 // Move to the next chunk
 
-
                 // Echo the buffer back to the sender
                 // When there's still more than 214 bytes left,
-                // subtract the maximum buflen to account for the number of bytes left and send to client.
+                // subtract the maximum buflen to account for the number of bytes left,
+                // encrypt and send to client.
                 if (bytesLeft > DEFAULT_BUFLEN) {
                     u_char messageBytes[DEFAULT_BUFLEN];
                     memset(encryptedMessage, 0, RSA_size(pubkey));
@@ -871,20 +892,26 @@ int server() {
 
                     RSA_public_encrypt(DEFAULT_BUFLEN, messageBytes, encryptedMessage, pubkey, RSA_PKCS1_OAEP_PADDING);
 
-                    iResult = send(ClientSocket, encryptedMessage, KEY_LEN, 0);
+                    iResult = send(ClientSocket, (char *)encryptedMessage, KEY_LEN, 0);
                     startIndex = endIndex;
                     endIndex = endIndex + DEFAULT_BUFLEN;
                 }
-                    // Getting to a number smaller or equal to the maximum buflen,
-                    // means we have reached the end of the message.
+                    // Getting to a number of bytes left that is smaller than or equal to the maximum buflen,
+                    // means we have reached the end of the message. encrypt and send to server
                 else if (bytesLeft <= DEFAULT_BUFLEN) {
                     u_char messageBytes[bytesLeft];
                     memcpy(messageBytes, curMessage, bytesLeft);
 
                     RSA_public_encrypt(bytesLeft, messageBytes, encryptedMessage, pubkey, RSA_PKCS1_OAEP_PADDING);
 
-                    iResult = send(ClientSocket, encryptedMessage, KEY_LEN, 0);
-                    bytesLeft -= iResult;
+                    iResult = send(ClientSocket, (char *)encryptedMessage, KEY_LEN, 0);
+
+                    if (iResult == SOCKET_ERROR) {
+                        printf("send failed: %d\n", WSAGetLastError());
+                        printf("The connection was terminated unexpectedly. Shutting down... \n");
+                        goto listen;
+                    }
+
                     closesocket(HttpSocket);
                     closesocket(ClientSocket);
                     memset(response, 0, contentLength);
@@ -893,6 +920,7 @@ int server() {
 
                 bytesLeft -= DEFAULT_BUFLEN;
 
+                // if a socket error occurs when sendingD
                 if (iResult == SOCKET_ERROR) {
                     printf("send failed: %d\n", WSAGetLastError());
                     printf("The connection was terminated unexpectedly. Shutting down... \n");
@@ -900,8 +928,9 @@ int server() {
                 }
             }
 
-        } else {
-            printf("The connection was terminated unexpectedly. Shutting down... \n");
+        } else { // if iResult returns an invalid/error code
+            printf("The connection was terminated unexpectedly. Closing connection... \n");
+            closesocket(ClientSocket);
             goto listen; // Go to the label accepting a new connection.
         }
     }
@@ -914,12 +943,6 @@ int main() {
     WSADATA wsaData; // Contains info about the winsock implementation.
     int iResult; // Number of bytes received.
 
-    // Sockets - server and client.
-    SOCKET ListenSocket = INVALID_SOCKET;
-    SOCKET ClientSocket = INVALID_SOCKET;
-    SOCKET ClientSocketAuth = INVALID_SOCKET;
-    SOCKET HttpSocket = INVALID_SOCKET;
-
     // Initialize Winsock. (Here iResult is the exit code for WSAStartup)
     iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
     if (iResult != 0) {
@@ -929,7 +952,7 @@ int main() {
     }
 
     // Specifying information - protocol etc.
-    struct addrinfo *result = NULL, hints, *http_result = NULL;
+    struct addrinfo hints;
 
     // Settings for the socket - ipv4,
     ZeroMemory(&hints, sizeof (hints)); // Fills a block of memory with zeroes.
@@ -938,11 +961,7 @@ int main() {
     hints.ai_protocol = IPPROTO_TCP;
     hints.ai_flags = AI_PASSIVE;
 
-
     OPENSSL_INIT_new();
-
-    ListenSocket = INVALID_SOCKET;
-    ClientSocket = INVALID_SOCKET;
 
     //main server, handles client requests and http.
     server();
